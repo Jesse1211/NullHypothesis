@@ -98,21 +98,50 @@
 
 策略在第 T 根 K 线收盘后被调用,可见截至 T 日的全部数据。其产生的订单在**第 T+1 根 K 线的 `Open`** 成交。
 
-**理由(结构性,不依赖任何权威)**:策略永远不可能看到自己的成交价 —— 它在 T 日收盘只见过 `Close`,而成交用的是 T+1 的 `Open`,后者在决策那一刻尚不存在。这杜绝了「用收盘价决策又按收盘价成交」这一类前视偏差。
+#### 生态系统实测(2026-10-03,GitHub 源码,逐条可复核)
 
-**它与日线数据的物理约束一致**:日线里「收盘后的下一个真实可成交时刻」就是次日开盘。*(注:这个问题在分钟级/逐笔回测里不存在 —— 那里决策与成交相隔毫秒,不是一个夜晚。T+1 开盘成交是**日线**的产物。)*
+| 框架 | 默认成交 | 源码证据 |
+|---|---|---|
+| **backtrader** | **下一根 开盘** | `brokers/bbroker.py`:`('coc', False)`、`('coo', False)`;`_try_exec_market` 默认分支 `exprice = popen` |
+| **PyAlgoTrade** | **下一根 开盘** | `broker/fillstrategy.py` `DefaultStrategy.fillMarketOrder`:`price = bar.getOpen(...)`;`backtesting.py` 注释 *"It is VERY important that the broker subscribes to barfeed events before the strategy."* |
+| **backtesting.py** | **下一根 开盘** | docstring *"market orders are filled on next bar's open"*;`trade_on_close=False` 默认;`broker.next()` 先于 `strategy.next()` |
+| **zipline-reloaded** | **下一根 收盘** | `gens/tradesimulation.py`:`blotter.get_transactions()` 在 `handle_data()` **之前**,注释 *"orders placed in the last bar"*;`finance/slippage.py` 默认模型 `price = data.current(order.asset, "close")` |
+| **vectorbt** | **同一根 收盘** | `from_signals` 的 `price` 默认 `np.inf`;`portfolio/enums.py` *"If `np.inf`, replaced by the current close."* **源码无前视偏差警告** |
+| **bt** | **同一根**(用户给的价格列) | `backtest.py`:`strategy.update(dt)` → `strategy.run()` 同一个 `dt`;无 OHLC 概念,实践中传收盘价 |
+| LEAN | 无法判定 | `Orders/Fills/FillModel.cs` 给出价格字段(`bar.Close`),但日线市价单是否延后一根取决于引擎时间切片,源码不足以判定 |
 
-**它不是行业标准,是本框架的选择。** 已知至少三种做法并存:
+**统计(分母写明)**:6 个框架从源码核实,LEAN 无法判定。
 
-| 语义 | 代价 |
-|---|---|
-| T 日 Close 决策 → **T+1 Open** 成交(本框架) | 最后一天信号丢弃;每笔成交承担一次隔夜跳空 |
-| T 日 Close 决策 → **T 日 Close** 成交 | 理想化:收盘后才知道的价格,却假设能按它成交 |
-| T 日 Close 决策 → **T+1 VWAP / 收盘** 成交 | 需更多数据;冲击成本假设更复杂 |
+- **「T 日决策 → T+1 成交」(不论什么价):4 / 6** —— 延后执行这个**原则**是多数
+- **「T 日 Close 决策 → T+1 **Open** 成交」(本框架的做法):3 / 6** —— 最常见的单一选择,**但不过半**
+- **同一根 K 线收盘成交:2 / 6** —— 真实存在的反例,且 vectorbt 很流行
 
-**来源**:设计期读参考实现 `backtesting.py` 源码,其市价单默认在次根 K 线 `Open` 成交(`price = prev_close if self._trade_on_close else open`),机制是 broker 在 strategy 之前执行 —— **但该库同时提供 `trade_on_close=True` 开关改掉这个默认,故它是一个库的默认值,不是行业标准。** 该库已从环境卸载(§6),构建期**无法复核**此陈述;视为**设计决策**。
+**→ 所以本 ADR 不是「行业标准」。** 可辩护的表述是:**在选择延后执行的框架中最常见的那一种**。
 
-**最终依据是使用者的选择**:方案 A(T 日 Close 成交)被明确拒绝,理由是其理想化。本 ADR 的正当性来自划定的边界与接受的代价,不需要行业背书。
+#### 各框架给出的理由(实测:0/6 提到前视偏差)
+
+| 框架 | 理由类别 | 原文 |
+|---|---|---|
+| backtrader | **「那是作弊」** | *"This is actually **cheating**, because the bar is **closed** and any order should first be matched against the prices [in the next bar]"* |
+| backtesting.py | **「K 线内无法决策」** | *"cannot make decisions / trades **within** candlesticks"* —— 数据粒度论证,**不是**偏差论证 |
+| PyAlgoTrade | 未说明理由 | 只强调 *"It is VERY important..."*,未说为什么 |
+| zipline / vectorbt / bt | 未说明理由 | 循环顺序清楚,但无注释解释选择 |
+
+**关键发现:没有任何框架把「杜绝前视偏差」作为理由。** 本 ADR 早先的草稿把它写成理由,**源码不支持**;那是作者自己的归类,现已删除。两个有解释的框架给的是不同的理由(公平性 vs 数据粒度)。
+
+#### 本 ADR 真正的依据
+
+1. **结构性质(可独立检验,不依赖权威)**:策略在 T 日只见过 `Close`,成交用 T+1 的 `Open` —— 后者在决策那一刻尚不存在,故策略**不可能**看到自己的成交价。
+2. **与日线数据的物理约束一致**:日线里「收盘后的下一个真实可成交时刻」就是次日开盘。*(该问题在分钟级/逐笔回测中不存在 —— 那里决策与成交相隔毫秒。T+1 开盘成交是**日线**的产物。)*
+3. **使用者的明确选择**:方案「T 日 Close 成交」被拒绝,理由是其理想化(收盘后才知道的价格,却假设能按它成交)。
+
+#### 未解决:同一根 K 线成交在物理上是否可能
+
+**待查(本会话无法回答)**:若 MOC(market-on-close)订单必须在收盘**之前**提交(推测 NYSE 约 15:50 ET),则提交时收盘价未知 → 「用 T 日 Close 决策、再按 T 日 Close 成交」**物理上不可实现**,那它就不是另一种惯例而是模拟一件不可能的事。
+
+**该推断未经核实。** 本会话所有 agent 类型均无网络工具(已探测确认),交易所规则书不在 GitHub 上。按 §7 第 3 条标注为**推断**,不作为本 ADR 的依据。要定性此问,需在可联网环境核 NYSE/Nasdaq 的 MOC 截止时间。
+
+**本 ADR 不依赖该答案** —— 上面三条依据已足够。
 
 ### ADR-003 · 估值:equity = cash + shares × Close
 
