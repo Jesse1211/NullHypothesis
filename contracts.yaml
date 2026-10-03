@@ -1,0 +1,245 @@
+# NullHypothesis · 契约钉死表(单一真相来源)
+#
+# 本文件是 DESIGN.md 中【每一个被钉死的字面量】的唯一来源。
+#
+# 为什么存在:前八轮审查中,同一个值在文档里有多达五处独立复述
+# (ADR-021 的输出样例、格式表、T6 的两条门、T13 的 I8 表),没有任何
+# 机制强制它们一致 —— 于是 ADR-021 在九行之内自相矛盾(mean_abs_gap_pct
+# 该显示 `0.31%` 还是 `+0.31%`)。第 6、7 两轮的修复各自引入了下一轮的
+# 头号 BLOCKER,机制都一样:改了一处,没重读显示同一个值的兄弟条款。
+#
+# 规则:DESIGN.md 的任何条款引用字面量时,引用本文件的 key,不复述其值。
+#       测试引用本文件的 key,不硬编码。
+#       `tests/test_contracts.py` 校验本文件自洽(算术、格式、引用完整性)。
+#
+# 这不是文档的附录 —— 这是契约本体,DESIGN.md 是它的散文说明。
+
+schema_version: 1
+
+# ───────────────────────────────── 格式 ─────────────────────────────────
+# 阶段一 CLI 渲染的数值格式。ADR-025 的五类格式化只约束阶段二的
+# Presentation BC,管不到这里 —— 故阶段一必须单独钉死。
+formats:
+  money:            "{:,.2f}"      # 12,500.00
+  count:            "{:,}"         # 2,516
+  percent_signed:   "{:+.2f}%"     # +25.00% / -8.42%   有正负号意义的量
+  percent_unsigned: "{:.2f}%"      # 0.31%              绝对值量,加 + 号零信息
+  date:             "%Y-%m-%d"     # 2020-03-16
+  null_display:     "N/A"
+
+# 每个 summary 字段用哪种格式 —— 这是 ADR-021 自相矛盾的根源,现在只有一处
+field_formats:
+  start:             date
+  end:               date
+  bars:              count
+  initial_cash:      money
+  final_equity:      money
+  total_return_pct:  percent_signed     # 有方向:+25.00% / -12.00%
+  trade_count:       count
+  max_gap_pct:       percent_signed     # 有方向:-8.42%
+  max_gap_date:      date
+  mean_abs_gap_pct:  percent_unsigned   # 绝对值均值恒 >= 0,不带 +
+
+# ──────────────────────────── 冻结的文案 ────────────────────────────
+frozen_text:
+  reconcile_line: "✓ 对账:每日 现金+持股市值 == 总资产"
+  assumption_adjusted: "OHLC 已预先复权(框架不验证)"
+  assumption_market_order: "仅支持市价单。T 日意图在 T+1 开盘无条件执行。"
+  single_day_notice: "数据仅 1 日,无法产生交易"
+  leverage_not_implemented: "杠杆未实现"
+
+# ───────────────────────────── 文件名 ─────────────────────────────
+filenames:
+  equity_png:     "{stem}_equity.png"
+  trades_csv:     "{stem}_trades.csv"
+  summary_txt:    "summary.txt"
+  summary_json:   "summary.json"
+  run_json:       "run.json"
+  comparison_png: "comparison.png"
+  sample_strategies: ["buy_and_hold.py", "ma_cross.py"]
+  # T8 的「三类输出齐全」= 下面这三个
+  t8_required_outputs: ["{stem}_equity.png", "{stem}_trades.csv", "summary.txt"]
+
+trades_csv_header: ["date", "side", "shares", "price", "fee", "cash_after", "shares_after"]
+trade_sides: ["BUY", "SELL"]
+
+# ───────────────────────────── 退出码 ─────────────────────────────
+exit_codes:
+  ok: 0
+  data_validation: 2      # DataValidationError
+  strategy_error: 3       # StrategyError
+  invalid_cli_args: 4     # CLI 参数非法 / 文件不存在 / stem 重复
+
+api_error_codes: ["DATA_VALIDATION", "STRATEGY_ERROR", "INVALID_REQUEST", "NOT_FOUND"]
+
+# ───────────────────────────── 数值精度 ─────────────────────────────
+rounding:
+  decimals: 2
+  fields: [final_equity, initial_cash, total_return_pct, max_gap_pct, mean_abs_gap_pct]
+
+# ───────────────────────────── 正则 ─────────────────────────────
+patterns:
+  run_id: "^\\d{8}-\\d{6}(-\\d+)?$"
+  timestamp_format: "%Y%m%d-%H%M%S"
+
+# ═══════════════════════════ 钉死的 fixture ═══════════════════════════
+# 每一项都必须能被 tests/test_contracts.py 重新算出来。
+# 第 8 轮手工重算发现 ADR-038 的示例交易算错了(3693×27.07=99969.51,
+# 故 cash_after 应为 30.49 而非 20.49;且 floor(100000/27.07)=3694 不是 3693)
+# —— 它错在唯一没有门去读的那个块里,这正说明:注意力只到门指向的地方。
+
+fixtures:
+  # ADR-016:T+1 开盘才算股数
+  adr016_fill_at_next_open:
+    cash: 10000.0
+    bar_t_close: 100.0
+    bar_t1_open: 200.0
+    weight: 1.0
+    expect_shares: 50          # floor(10000/200)
+    reject_shares: 100         # 错误实现:按 T 日 Close 锁定 floor(10000/100)
+
+  # ADR-014:分母是可投资产,三向可分
+  adr014_denominator_three_way:
+    cash: 10000.0
+    fee_rate: 0.0
+    open_1: 100.0
+    open_2: 100.0
+    weight_1: 0.5
+    weight_2: 0.8              # 必须 != 1.0,否则 correct 与 err_spend_cash 重合
+    after_leg1_shares: 50
+    after_leg1_cash: 5000.0
+    investable_2: 10000.0      # cash + shares*open_2
+    expect_final_shares: 80    # floor(0.8*10000/100) = 80
+    reject_target_from_cash: 40    # floor(0.8*5000/100)-50 = -10 -> 40
+    reject_spend_cash: 90          # floor(0.8*5000/100) = +40 -> 90
+
+  # ADR-012:floor 取整,区分 round / ceil
+  adr012_floor_vs_ceil:
+    cash: 10000.0
+    open: 300.0
+    weight: 1.0
+    expect_shares: 33          # floor(33.33)
+    reject_shares: 34          # ceil
+    expect_cash_after: 100.0
+    one_share_price: 300.0     # 断言 cash_after < 此值(未被 clamp)
+
+  adr012_floor_vs_round:
+    cash: 10000.0
+    open: 1200.0
+    weight: 0.1
+    raw: 0.8333333333333334
+    expect_shares: 0           # floor
+    reject_round: 1
+    reject_ceil: 1
+    expect_push_count: 0       # 0 股 -> 不入队(ADR-008)
+
+  # ADR-041:末次胜出,且末次差额为 0 时整单丢弃
+  adr041_last_call_zero_delta:
+    cash: 10000.0
+    open: 100.0
+    after_target_half_shares: 50
+    after_target_half_cash: 5000.0
+    investable: 10000.0
+    current_weight: 0.5        # 50*100/10000 —— 故 target(0.5) 差额为 0
+    sequence: ["order(100)", "target(0.5)"]
+    expect_push_count: 0
+    expect_fills_added: 0
+
+  # I7:四价互异,任一错位必然失败
+  i7_four_distinct_prices:
+    bar0: {open: 50.0, close: 100.0}
+    bar1: {open: 200.0, close: 400.0}
+    order_on_bar: 0
+    shares: 1
+    expect_fill_price: 200.0   # bar1.Open
+    reject_prices: [50.0, 100.0, 400.0]
+
+  # ADR-021:跳空三向可分
+  adr021_gaps:
+    dates: ["2020-01-02", "2020-01-03", "2020-01-06", "2020-01-07"]
+    closes: [100.0, 100.0, 100.0, 100.0]
+    opens:  [100.0, 105.0, 92.0, 103.0]
+    gaps_pct: [5.0, -8.0, 3.0]          # round 2 后
+    expect_max_gap_pct: -8.0            # 按绝对值选,按原符号显示
+    expect_max_gap_date: "2020-01-06"
+    expect_mean_abs_gap_pct: 5.33       # round(16/3, 2)
+    reject_max_plain: 5.0               # max() 而非 max(abs())
+    reject_mean_signed: 0.0             # (5-8+3)/3 恰为 0 —— 选这组数的原因
+    expect_gaps_len_formula: "交易日数 - 1"
+
+  adr021_gap_tie:
+    gaps_pct: [5.0, -5.0]
+    rule: "绝对值相等取较早日期"
+
+  # Summary 字段的数值门(归 T5 —— 只有它有真实 bars)
+  t5_summary_values:
+    initial_cash: 10000.0
+    final_equity: 12500.0
+    expect_total_return_pct: 25.0
+    reject_ratio_unscaled: 0.25         # 未乘 100
+    reject_wrong_quotient: 125.0        # 误用 final/initial*100
+
+  # T2:Strategy 的只读属性
+  t2_strategy_equity:
+    cash: 10000.0
+    shares: 50
+    close: 120.0
+    expect_equity: 16000.0
+
+  # T13 的 I8 不自洽 mock —— 每个字段都与可推导来源故意冲突
+  i8_inconsistent_mock:
+    final_equity: 999.0
+    equity_last: 916062.13              # 故意不等于 final_equity
+    trade_count: 7
+    trades_length: 3                    # 故意不等于 trade_count
+    total_return_pct: 42.0
+    initial_cash: 100000.0              # 期末 200000 -> 自算会得 +100%
+    implied_final: 200000.0
+    max_gap_pct: -8.42
+    max_gap_date: "2020-03-16"
+    expect_rendered:
+      final_equity: "999.00"
+      trade_count: "7"
+      total_return_pct: "+42.00%"
+      max_gap_pct: "-8.42%"
+    reject_rendered:
+      total_return_pct: ["+100.00%"]
+      final_equity: ["916,062.13"]
+      trade_count: ["3"]
+      max_gap_pct: ["8.42%", "-0.08%", "-842.00%"]
+
+  # OQ-08 的阈值,双向可证伪
+  oq08_search_box_threshold:
+    render_when_items_gt: 20
+    assert_rendered_at: 21
+    assert_absent_at: 20
+
+# ═══════════════════════ 门的可执行性前提 ═══════════════════════
+# 第 8 轮发现的第四类缺陷:三条自检规则都在审查「断言」,没有任何一条
+# 审查「到达断言所需的布置」。T8 的碰撞门要 monkeypatch,而同一任务的
+# 其他条款规定用 subprocess 跑 —— monkeypatch 到不了子进程。
+gate_execution:
+  monkeypatch_seams:
+    - backtest._timestamp        # T8/T11 的碰撞门
+    - plot.write                 # T10 的 I9 同源断言(须按模块属性引用才可打桩)
+    - api.execute_run            # T10 的串行化断言
+    - Backtest.enqueue           # T4 的 push_count
+    - Backtest.resolve_queue     # T4 的出队采样与 is 比对
+  # 需要 monkeypatch 的门【必须在进程内】跑 —— 打桩跨不过 subprocess 边界
+  in_process_required:
+    - T4.queue_sampling
+    - T4.push_count
+    - T8.archive_collision
+    - T10.serialization
+    - T10.i9_same_source
+    - T11.history_two_runs
+  subprocess_required:
+    - T8.end_to_end_cli
+    - T8.exit_codes
+    - T10.cli_vs_api_reconciliation
+  # fixture 由谁造 —— 必须在本任务 DAG 的传递闭包内
+  fixture_producers:
+    T11.history_two_runs: T8     # 直接在进程内调 create_archive_dir + write_run_json
+    T13.i8_mock: T10             # 契约 fixture,已 commit 进 git
+    T6.pure_run_report: T6       # 手工构造,不经 Backtest
+    T7.pure_run_report: T7
