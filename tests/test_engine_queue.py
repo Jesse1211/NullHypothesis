@@ -172,6 +172,51 @@ def count_pushes(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     return pushed
 
 
+def count_order_constructions_during_resolve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[str]:
+    """数 `resolve_queue` **执行期间**被构造出来的 `Order` 对象。
+
+    这是 ADR-002「每日重算」那条门**唯一结构上有效**的测法,理由见
+    `test_enqueued_order_object_is_the_same_object_dequeued_next_bar` 的
+    docstring。正确实现在 `resolve_queue` 里只**读**昨天出队的那个订单
+    (ADR-016:「解析不改写它」),故计数恒为 **0**;任何在成交时刻重建
+    /复制订单的实现(`dataclasses.replace`、`TargetOrder(weight=...)`
+    再算一遍)计数 >= 1。
+
+    打在 `__init__` 而不是 `__new__` 上:`dataclasses.replace` 走的是
+    `__init__`,而那正是实测中唯一逃过原断言的那个变异体的写法。
+    """
+    constructed: list[str] = []
+    inside = False
+
+    def make(cls: type) -> Any:
+        original_init = cls.__init__
+
+        def init(self: Any, *args: Any, **kwargs: Any) -> None:
+            if inside:
+                constructed.append(type(self).__name__)
+            original_init(self, *args, **kwargs)
+
+        return init
+
+    for cls in (TargetOrder, ShareOrder):
+        monkeypatch.setattr(cls, "__init__", make(cls))
+
+    original_resolve = Backtest.resolve_queue
+
+    def spy(self: Backtest, bar: Any) -> Any:
+        nonlocal inside
+        inside = True
+        try:
+            return original_resolve(self, bar)
+        finally:
+            inside = False
+
+    monkeypatch.setattr(Backtest, "resolve_queue", spy)
+    return constructed
+
+
 # ═════════════════════════ I7 ═════════════════════════
 
 
@@ -344,8 +389,9 @@ def test_order_shares_zero_is_never_enqueued(monkeypatch: pytest.MonkeyPatch):
 # │                                                                        │
 # │ 唯一能让 `push_count == 1` 的写法是在入队前用 **T 日 Close** 预筛差额。 │
 # │ 本文件实测过那条路(400k 组随机 cash/shares/Close/Open/weight):        │
-# │ **1573 组**里「按 Close 预筛为 0、按 T+1 Open 的真实差额非 0」—— 即预筛 │
-# │ 会**静默吞掉本该成交的订单**。那违反:                                  │
+# │ 「按 Close 预筛为 0、按 T+1 Open 的真实差额非 0」的组数**非零**(两次   │
+# │ 独立复现分别得 1573 / 3411 组,量级随抽样区间变,**结论不变**)——      │
+# │ 即预筛会**静默吞掉本该成交的订单**。那违反:                            │
 # │   * ADR-020「T 日意图在 T+1 开盘**无条件执行**」;                      │
 # │   * ADR-016 的全部理由(它存在就是为了不在 T 日锁定任何数值);         │
 # │   * §7 第 1 条「功能开关不得绕过任何 ADR 决策」。                      │
@@ -378,6 +424,7 @@ def test_adr008_same_weight_ten_days_transacts_once(monkeypatch: pytest.MonkeyPa
     bars = [Bar(Date=f"2020-02-{d:02d}", Open=100.0, Close=100.0) for d in range(1, 11)]
     bt = Backtest(cash=10000.0, fee=0.0)
 
+    pushed = count_pushes(monkeypatch)
     resolved: list[Any] = []
     ledger: list[tuple[float, int]] = []
     original = Backtest.resolve_queue
@@ -394,6 +441,15 @@ def test_adr008_same_weight_ten_days_transacts_once(monkeypatch: pytest.MonkeyPa
         warnings.simplefilter("always")
         fills = drive(bt, make_strategy(lambda st, i: st.target(weight=1.0)), bars)
 
+    # ADR-008 门的 `push_count` 条款中**在 ADR-016 下仍可满足的那一半**:
+    # 每根 K 线的意图都必须**经由 `enqueue` 接缝**(ADR-035),且全程**只有
+    # 1 笔成交**。不可满足的是「push_count == 1」—— 它要求在入队点就知道
+    # 差额,而 ADR-016 把差额的计算推迟到 T+1 开盘(见本节顶部冲突说明)。
+    # 故这里钉死「入队次数 == 天数」与「成交次数 == 1」两端:一个绕过接缝
+    # 的实现(push 不到 10)与一个重复成交的实现(fill > 1)都会变红。
+    assert len(pushed) == len(bars) == 10, (
+        f"每根 K 线的意图都必须经由 enqueue 接缝(ADR-035),实得 {len(pushed)}"
+    )
     assert len(resolved) == len(bars) == 10
     assert sum(r is not None for r in resolved) == 1, (
         f"ADR-008:同一 weight 连续 10 日只该成交 1 笔,实得 "
@@ -419,6 +475,7 @@ def test_adr008_weight_half_ten_days(monkeypatch: pytest.MonkeyPatch):
     bars = [Bar(Date=f"2020-02-{d:02d}", Open=100.0, Close=100.0) for d in range(1, 11)]
     bt = Backtest(cash=10000.0, fee=0.0)
 
+    pushed = count_pushes(monkeypatch)
     resolved: list[Any] = []
     ledger: list[tuple[float, int]] = []
     original = Backtest.resolve_queue
@@ -435,6 +492,11 @@ def test_adr008_weight_half_ten_days(monkeypatch: pytest.MonkeyPatch):
         warnings.simplefilter("always")
         fills = drive(bt, make_strategy(lambda st, i: st.target(weight=0.5)), bars)
 
+    # 同上:`push_count == 1` 在 ADR-016 下不可满足,故钉死可满足的两端 ——
+    # 「每根 K 线都经由 enqueue 接缝」与「只成交 1 次」。
+    assert len(pushed) == len(bars) == 10, (
+        f"每根 K 线的意图都必须经由 enqueue 接缝(ADR-035),实得 {len(pushed)}"
+    )
     assert sum(r is not None for r in resolved) == 1
     assert all(r is None for r in resolved[2:])
     assert ledger[1:] == [(5000.0, 50)] * 9, (
@@ -586,6 +648,18 @@ def test_adr014_denominator_is_investable_three_way():
 
     assert len(fills) == 2
     assert fills[0].shares == fx["after_leg1_shares"]
+    # §5 T4 的 ADR-014 条款明文要求钉死第二笔的**方向**。正确实现的第二腿是
+    # `floor(0.8*10000/100) - 50 = +30` → **BUY**;而错误 ①(分母 = 剩余现金)
+    # 算出 `floor(0.8*5000/100) - 50 = -10` → **SELL**。故这一行把「方向」
+    # 单独钉死,使错误 ① 在**第二笔的 side 上**就暴露,而不必等到终局持仓 ——
+    # 差额的**符号**本身就是三向判别的一部分。
+    assert fills[1].side == "BUY", (
+        "ADR-014:第二腿必须是**买入** 30 股(分母 = 可投资产 10000)。"
+        "若为 SELL,说明分母用了剩余现金 5000(错误 ①,差额 -10)"
+    )
+    assert fills[1].shares == (
+        fx["expect_final_shares"] - fx["after_leg1_shares"]
+    ), "第二腿股数 = 终局持仓 - 第一腿持仓(全部取自 fixture,不复用被测公式)"
     assert bt.shares == fx["expect_final_shares"]
     assert bt.shares != fx["reject_target_from_cash"]
     assert bt.shares != fx["reject_spend_cash"]
@@ -869,6 +943,17 @@ def test_enqueued_order_object_is_the_same_object_dequeued_next_bar(
     `TargetOrder` / `ShareOrder` 刻意用 `eq=False`(保留身份相等),故本门
     无法被误写成等价的 `==` 弱断言 —— 两个不同的 `ShareOrder(shares=1)` 在
     `==` 下也不相等。
+
+    **本条单独不足以抓住它的目标 bug —— 配套条款见
+    `test_resolve_queue_constructs_no_order_objects`。** 实测发现的洞:本条在
+    委托前采样 `self.queue[0]`,故它只证明「**躺在队列里**的那个对象是昨天
+    入队的」;它**没有**把那个对象与真正产出的 `Fill` 绑在一起。一个先正确
+    `pop()`、再 `dataclasses.replace(_q)` 并按**新副本**算股数的实现
+    ——「每日重算」的教科书写法 —— 在本条下采样到的仍是昨天那个对象,输出
+    数值也完全相同(`Fill(shares=100, price=100.0)`、`cash=0.0`),42 条 T4
+    门**全部通过**。那正是 ADR-002(DESIGN.md:150)写这条门要拦的实现。
+    故真正的钉死落在配套条款上:断言 `resolve_queue` 执行期间构造出的
+    `Order` 对象数**为 0**(正确实现 0,上述变异体 1)。
     """
     bars = [Bar(Date=f"2020-05-{d:02d}", Open=100.0, Close=100.0) for d in range(1, 5)]
 
@@ -896,6 +981,62 @@ def test_enqueued_order_object_is_the_same_object_dequeued_next_bar(
         )
     # 身份相等:`==` 也无法被两个同值对象混过。
     assert ShareOrder(shares=1) != ShareOrder(shares=1)
+
+
+def test_resolve_queue_constructs_no_order_objects(monkeypatch: pytest.MonkeyPatch):
+    """ADR-002「每日重算」的**有效**钉死:`resolve_queue` 内**不得**构造 `Order`。
+
+    DESIGN.md:150 逐字:`is` 比较存在的目的是「抓出『每日重算』的实现:它结果
+    可能对,但纪律已经没了」。而「结果可能对」正是上一条断言失效的原因 ——
+    「每日重算」的输出与正确实现**数值全同**,靠比对数值或比对「队列里躺着
+    谁」都抓不到它。
+
+    唯一的结构性差别:正确实现在成交时刻只**读**昨天那个订单(ADR-016:
+    「解析**不改写** `TargetOrder`,而是产出一个新的 `Fill`」),故它在
+    `resolve_queue` 里**构造 0 个** `Order`;而「每日重算」必须在那一刻把
+    订单重建或复制一份(`dataclasses.replace` / 重新 `TargetOrder(...)`),
+    计数 >= 1。本条就断言那个计数。
+
+    判别力实测(变异体 `order = dataclasses.replace(self.queue.pop())`):
+      * 正确实现 → 构造 0 个 → 通过
+      * 变异体   → 构造 1 个 → 失败(而它能通过其余 42 条门的全部)
+
+    两种订单各跑一次:`TargetOrder` 的股数到 T+1 才算(ADR-016),是最容易
+    被写成「重算」的那种;`ShareOrder` 一并钉死,防止只对一条路径守纪律。
+    """
+    bars = [Bar(Date=f"2020-06-{d:02d}", Open=100.0, Close=100.0) for d in range(1, 5)]
+
+    # ── TargetOrder:ADR-016 下股数在成交时刻才算,最易被实现成「重算」 ──
+    constructed = count_order_constructions_during_resolve(monkeypatch)
+    bt = Backtest(cash=10000.0, fee=0.0)
+    fills = drive(bt, make_strategy(lambda st, i: st.target(weight=1.0)), bars)
+
+    # 先确认本测真的跑到了成交路径 —— 否则「0 个构造」会因空转而假绿。
+    assert len(fills) == 1, "ADR-008:同一 weight 只成交 1 笔(本测需要它真的成交)"
+    assert bt.shares == 100
+    assert constructed == [], (
+        f"ADR-002:`resolve_queue` 必须只**读**昨天出队的订单(ADR-016:"
+        f"「解析不改写它」),不得重建/复制 —— 那是『每日重算』。"
+        f"实测在成交期间构造了 {len(constructed)} 个 Order:{constructed}"
+    )
+
+
+def test_resolve_queue_constructs_no_order_objects_share_order(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """同上,走 `ShareOrder` 路径 —— 两条路径都不得在成交时刻重建订单。"""
+    bars = [Bar(Date=f"2020-06-{d:02d}", Open=100.0, Close=100.0) for d in range(1, 5)]
+
+    constructed = count_order_constructions_during_resolve(monkeypatch)
+    bt = Backtest(cash=100000.0, fee=0.0)
+    fills = drive(bt, make_strategy(lambda st, i: st.order(shares=1)), bars)
+
+    assert len(fills) == len(bars) - 1, "最后一根的单按 ADR-005 丢弃"
+    assert bt.shares == len(bars) - 1
+    assert constructed == [], (
+        f"ADR-002:`ShareOrder` 路径同样不得在 `resolve_queue` 里重建订单。"
+        f"实测构造了 {len(constructed)} 个:{constructed}"
+    )
 
 
 def test_enqueue_overwrites_rather_than_appends():
