@@ -23,6 +23,7 @@ import math
 import re
 import subprocess
 import sys
+import tempfile
 import textwrap
 import traceback
 from pathlib import Path
@@ -1121,3 +1122,90 @@ def test_adr036_attribute_names_are_exactly_the_four():
         assert attr is not None, f"ADR-036 的属性 {name} 缺失"
         assert hasattr(type(attr), "__get__"), f"{name} 必须是描述符(只读)"
         assert hasattr(type(attr), "__set__"), f"{name} 必须拒绝赋值"
+
+
+# ═══════════ 门:本轮返工新增接缝(审查 J1/J2/J4) ═══════════
+
+
+def test_frozen_leverage_text_constant_matches_contracts_yaml():
+    """审查 J1:生产常量与 `contracts.yaml` 的 key 必须一致。
+
+    生产代码改为**钉死常量**(不在运行时读 YAML —— contracts.yaml:12 的纪律
+    约束的是测试,且 `except Exception` 回退会让漂移静默)。漂移的拦截点就是
+    本条门:常量与 YAML 一旦分叉,这里立刻红。
+    """
+    from nullhypothesis.strategy import LEVERAGE_NOT_IMPLEMENTED
+
+    assert LEVERAGE_NOT_IMPLEMENTED == FROZEN["leverage_not_implemented"]
+
+
+def test_strategy_module_imports_without_yaml_or_contracts_file():
+    """审查 J1:`nullhypothesis` 不得依赖 PyYAML 或 contracts.yaml 的存在。
+
+    §6 只把 PyYAML 列为 `CONTRACT_CMD` 的依赖,不是本包的依赖。断言**行为**而非
+    源码文本:在子进程里屏蔽 `yaml` 并把 cwd 换到空目录(contracts.yaml 不可见),
+    import 仍须成功且常量仍须是正确值。
+    """
+    probe = textwrap.dedent(
+        """
+        import sys, pathlib
+        sys.modules["yaml"] = None          # 任何 `import yaml` 都会 ImportError
+        sys.path.insert(0, %r)
+        from nullhypothesis.strategy import LEVERAGE_NOT_IMPLEMENTED as L
+        assert L == %r, L
+        print("ok")
+        """
+    ) % (str(ROOT), FROZEN["leverage_not_implemented"])
+    empty = tempfile.mkdtemp()
+    out = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=empty,
+        capture_output=True,
+        text=True,
+    )
+    assert out.returncode == 0, f"stdout={out.stdout!r} stderr={out.stderr!r}"
+    assert "ok" in out.stdout
+
+
+def test_bind_identity_binds_to_instance_not_class(tmp_path):
+    """审查 J2:`_bind_identity` 把身份绑在实例上,不污染共享类状态。"""
+    p = write_strategy(tmp_path, "ident.py", """
+        class S(Strategy):
+            def next(self):
+                pass
+    """)
+    cls = load_strategy(p)
+    a, b = cls(), cls()
+    a._bind_identity(source_file="/x/a.py", strategy_name="aaa")
+
+    assert a._strategy_name == "aaa" and a._source_file == "/x/a.py"
+    # b 未绑定 → 仍读到 load_strategy 写在类上的向后兼容默认值
+    assert b._strategy_name == "ident", "实例绑定不得泄漏到同类的其他实例"
+    assert cls._strategy_name == "ident", "实例绑定不得改写类属性"
+
+
+def test_phase_values_are_exactly_the_documented_set(tmp_path):
+    """审查 J4:`_phase` 的实际取值集合 == `_PHASES`(注释曾漏掉 `ready`)。"""
+    from nullhypothesis.strategy import _PHASES
+
+    seen = set()
+    p = write_strategy(tmp_path, "ph.py", """
+        class S(Strategy):
+            def init(self):
+                pass
+            def next(self):
+                pass
+    """)
+    cls = load_strategy(p)
+    s = cls()
+    seen.add(s._phase)                       # created
+    s._enter_init(data=make_bars(0), cash=100.0)
+    seen.add(s._phase)                       # init
+    s._exit_init()
+    seen.add(s._phase)                       # ready
+    s._enter_next(bar_index=0, date="2020-01-02")
+    seen.add(s._phase)                       # next
+    s._exit_next()
+    seen.add(s._phase)                       # ready
+
+    assert seen == set(_PHASES), f"实际阶段 {seen} != 文档化的 {set(_PHASES)}"

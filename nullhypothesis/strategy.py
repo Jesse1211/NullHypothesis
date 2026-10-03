@@ -20,7 +20,14 @@ ADR 索引(本模块的每个决定都挂在一条 ADR 上):
 * **ADR-006** —— 意图在 T 日产生、T+1 开盘成交。本模块只**记录意图**
   (`Strategy.pending_intent`),不解析成股数 —— 解析归 T4 的 `engine.Backtest`
   (ADR-016:`TargetOrder` 入队时只存 `weight`,不存股数)。
-* **ADR-035** —— 本模块的公开符号恰为 `Strategy` 与 `load_strategy`。
+* **ADR-035** —— 本模块**被钉死**的公开符号是 `Strategy` 与 `load_strategy`;
+  二者均按 ADR-035 实现。`__all__` 另外导出 `TargetIntent` / `ShareIntent` /
+  `LEVERAGE_NOT_IMPLEMENTED` —— ADR-035 规定哪些名字**必须存在**,未禁止加性
+  地增加,§7 第 1 条允许加性变更。
+  *(待上报的 DESIGN.md 缺口,T2 不得单方面修补 —— §7 第 5 条:
+  `TargetIntent`/`ShareIntent` 与 `Strategy.pending_intent` 是 T2→T4 的交接
+  接缝,T4 的门要读它,而 §4.5 自检规则二要求「下游门读的接缝必须在 ADR-035
+  中被钉死为模块级公开名」。它们目前不在 ADR-035 里。)*
 
 **分层边界(ADR-035 / §4.5 的归属矩阵)**:订单队列、成交、`floor` 取整、
 「可投资产」分母都归 T4 的 `engine.py`。本模块不 import `engine`,也不计算股数。
@@ -54,25 +61,20 @@ __all__ = [
 
 # ───────────────────────── 冻结文案 ─────────────────────────
 #
-# `contracts.yaml` 的 `frozen_text.leverage_not_implemented` 是单一真相来源
-# (§4.5 的构建期纪律:「测试引用本文件的 key,不硬编码」)。生产代码在运行时
-# 不读 YAML —— 那会让 `nullhypothesis` 依赖一个数据文件的存在。故这里在
-# **import 期**从 contracts.yaml 读取,读不到才退回字面量;T2 的门直接比对
-# YAML 的值,任何漂移都会红。
-def _load_frozen_leverage_text() -> str:
-    fallback = "杠杆未实现"
-    contracts = Path(__file__).resolve().parent.parent / "contracts.yaml"
-    try:
-        import yaml  # type: ignore[import-untyped]
-
-        data = yaml.safe_load(contracts.read_text(encoding="utf-8"))
-        text = data["frozen_text"]["leverage_not_implemented"]
-    except Exception:
-        return fallback
-    return text if isinstance(text, str) and text else fallback
-
-
-LEVERAGE_NOT_IMPLEMENTED: str = _load_frozen_leverage_text()
+# `contracts.yaml` 的 `frozen_text.leverage_not_implemented` 是这段文案的单一
+# 真相来源(ADR-015 / DESIGN.md:284 引用该 key)。这里把它作为**钉死常量**复制
+# 一份,生产代码不在运行时读 YAML:
+#
+#   * contracts.yaml:12 的纪律原文是「**测试**引用本文件的 key,不硬编码」——
+#     它约束测试,不约束产品代码;§6 也只把 PyYAML 列为 `CONTRACT_CMD` 的依赖,
+#     不是 `nullhypothesis` 包的依赖。让产品代码 import yaml 会凭空加一条依赖。
+#   * 漂移由门拦住,不是靠运行时读取:`tests/test_strategy.py` 直接断言消息含
+#     `FROZEN["leverage_not_implemented"]`(从 YAML 现读),故本常量与 YAML 一旦
+#     分叉,T2 的门立刻红。
+#
+# (上一版在 import 期读 YAML 并以 `except Exception` 回退到字面量 —— 那恰好
+#  反转了目标:contracts.yaml 缺失/改名时会**静默**换用回退值而无门变红。)
+LEVERAGE_NOT_IMPLEMENTED: str = "杠杆未实现"
 
 
 # ───────────────────────── 意图值对象 ─────────────────────────
@@ -99,6 +101,14 @@ class ShareIntent:
     """`order(shares=n)` 的意图。差额就是 `n` 本身(ADR-014)。"""
 
     shares: int
+
+
+# ───────────────────────── 阶段取值 ─────────────────────────
+#
+# `Strategy._phase` 的全部合法取值。用 frozenset 而非 Enum:`_phase` 只在本模块
+# 内部比较,Enum 会让 T4/T5 为了调 `_enter_next` 多 import 一个名字,而 ADR-035
+# 没把它钉死为公开符号(§4.5 自检规则二 —— 不预占未钉死的跨任务名字)。
+_PHASES = frozenset({"created", "init", "ready", "next"})
 
 
 # ───────────────────────── 只读属性 ─────────────────────────
@@ -173,7 +183,15 @@ class Strategy:
     _cash_value: float = 0.0
     _shares_value: int = 0
     _equity_value: float = 0.0
-    _phase: str = "created"  # created -> init -> next -> finished(§1 的生命周期)
+    # 阶段机:取值恰为 `_PHASES`,迁移为
+    #     created --_enter_init--> init --_exit_init--> ready
+    #     ready   --_enter_next--> next --_exit_next--> ready   (每根 K 线一轮)
+    # `ready` 是「已 init、不在任何 next() 内」的静止态,也是 `_require_trading_phase`
+    # 在 bar 之外拒绝下单时实际看到的值。
+    # 注:这**不是** §1 的聚合生命周期(`created -> running -> finished`)——
+    # 那是 `engine.Backtest` 的状态;本机描述的是单个 `Strategy` 实例的回调阶段,
+    # 故没有 `finished`(策略实例不自己终止,引擎跑完就不再调它)。
+    _phase: str = "created"
     _bar_index: int = -1
     _bar_date: str = ""
     _source_file: str = "<unknown>"
@@ -225,6 +243,14 @@ class Strategy:
         self._set_intent(ShareIntent(shares=self._validate_shares(shares)))
 
     # ─────────────────── 校验(ADR-015 / ADR-022) ───────────────────
+
+    # 关于 `_validate_weight` / `_validate_shares` 的重复(审查 J3):两者的
+    # None/bool 前缀形状相同,但数值尾部受**不同** ADR 约束 —— weight 是
+    # ADR-015 的闭区间 [0,1](接受小数),shares 是 ADR-012 的整数股。抽取
+    # 公共前缀需要把参数名与提示文案参数化,结果是每条消息都要在 f-string 里
+    # 拼装,反而让「哪条 ADR 拒绝了这个值」更难追溯。故**有意保留**两段平行
+    # 的显式阶梯:每个 raise 点字面写出自己的 ADR 编号(§7 第 5 条要求实现
+    # 时引用 ADR 编号)。这是经权衡的选择,不是疏漏。
 
     def _validate_weight(self, weight: Any) -> float:
         """ADR-015 的闭区间 + ADR-022 的「非法值立即终止」。
@@ -385,6 +411,18 @@ class Strategy:
         """由引擎写入 `Bars[0..T]` 的**独立副本**(I5)。副本由引擎负责。"""
         self._data_value = data
 
+    def _bind_identity(self, *, source_file: str, strategy_name: str) -> None:
+        """把「我来自哪个文件 / 叫什么」绑到**实例**上(审查 J2)。
+
+        `load_strategy` 另外把同样两个值写在**类**上,作为向后兼容的默认值 ——
+        T4/T5 直接实例化而不调本接缝时,ADR-022 的消息仍然有名字可打。但类属性
+        是共享状态:策略文件 A 若 `import` 并复用了别处定义的子类,两次 load 的
+        `_source_file` 可能互相覆盖。实例绑定优先级更高(属性查找先看实例),
+        故调过本方法的实例永远读到自己那一次 load 的身份。
+        """
+        self._source_file = source_file
+        self._strategy_name = strategy_name
+
     def _enter_init(self, *, data: Any, cash: float) -> None:
         """进入 `init()` 阶段(ADR-036)。
 
@@ -435,8 +473,11 @@ class Strategy:
 # ───────────────────────── 加载 ─────────────────────────
 
 
-def _assert_zero_arg_next(cls: type, path: Path) -> None:
-    """ADR-036:`next()` 以**零参数**调用。
+def _assert_zero_arg_callbacks(cls: type, path: Path) -> None:
+    """ADR-036:`init()` 与 `next()` 均以**零参数**调用。
+
+    名字用复数 `callbacks` 而非 `next` —— 下面的循环同时检查两个回调,
+    叫 `_assert_zero_arg_next` 会把实际范围说窄。
 
     `def next(self, bar)` 的策略文件必须**报错而非被当作合法** —— 否则引擎调用
     `next()` 会抛 `TypeError`,而那个 TypeError 发生在第 0 根 K 线、被 ADR-022
@@ -578,12 +619,17 @@ def load_strategy(path: str | Path) -> type:
 
     try:
         cls = _discover_subclass(module, resolved)
-        _assert_zero_arg_next(cls, resolved)
+        _assert_zero_arg_callbacks(cls, resolved)
     except BaseException:
         sys.modules.pop(module_name, None)
         raise
 
     # 让 ADR-022 的错误消息能指向真实源文件与行号(ADR-036 禁 exec 的理由)。
+    #
+    # 写在**类**上:`load_strategy` 按 ADR-035 返回类而非实例(引擎每次运行自己
+    # 实例化,T5 的 `run([A, A_copy])` 要两条独立曲线),此刻还没有实例可绑。
+    # 每次 load 用 uuid 后缀的模块名,故同一文件两次 load 得到两个不同的类对象,
+    # 这两行不会互相覆盖。引擎若想要实例级身份(更强的隔离),调 `_bind_identity`。
     cls._source_file = str(resolved)
     cls._strategy_name = stem
     return cls
