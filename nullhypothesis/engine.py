@@ -47,6 +47,12 @@ T4 只拥有其中的「队列 + 成交」部分;主循环、`equity[]`/`trades[
     T3 的 docstring 也写明「T4 要算目标股数时不该调用本方法」。
 
   * **ADR-012** —— 目标股数 `floor`。算出 0 股则按 ADR-008 无声跳过。
+  * **ADR-010/016 的「永不超买」** —— I1(`cash >= 0`)由构造保证,
+    「不该靠运气成立」。故目标股数的分母用**含手续费的每股成本**
+    `Open * (1 + rate)`:ADR-043 把手续费算进买入现金流,按裸 `Open`
+    定量会在 `weight` 接近 1 且 `rate > 0` 时算出买不起的股数,
+    使 `Account.apply` 抛 I1 而整轮中止。ADR-014 钉死的是**分子**
+    (可投资产 `cash + shares * Open`),本式分子**未改**。
   * **ADR-008** —— 差额为 0 则**不生成订单、不报警、静默跳过**。幂等是引擎的
     责任。本模块在**两处**落实它:`enqueue` 之前(T5 读 `pending_intent` 后
     调 `enqueue_intent`,零差额的 `ShareOrder` 不入队)与 `resolve_queue` 内
@@ -341,9 +347,16 @@ class Backtest:
           2. **算可投资产**(ADR-014):``investable = cash + shares * bar.Open``。
              用成交日的 `Open`,**不是** `equity`(Close 基准),那一刻当日
              Close 尚不存在。
-          3. **算差额**:`TargetOrder` → `floor(weight * investable / Open)`
+          3. **算差额**:`TargetOrder` →
+             `floor(weight * investable / (Open * (1 + rate)))`
              (ADR-012 的 floor、ADR-016 的 T+1 才算)**减当前持仓**;
              `ShareOrder` → 差额就是 `shares` 本身(ADR-014)。
+
+             分母含 `(1 + rate)` 是因为买一股的真实代价含手续费(ADR-043:
+             「买入:cash -= shares * price + fee」)。少了它,`weight=1.0`
+             且 `rate > 0` 会算出买不起的股数、在第 6 步撞 I1 而中止回测
+             —— 那会使 ADR-010/016 的「永不超买」保证为假。`rate` 默认
+             `0.0`(ADR-007),此时与 `/ Open` **逐位相同**。
           4. **ADR-008**:差额为 0 → 返回 `None`。不报警、不记账、不产生
              `Fill`(故 ADR-042 的交易次数不会偏大)。订单已在第 1 步出队,
              按 ADR-041 被丢弃而非回退执行。
@@ -391,11 +404,35 @@ class Backtest:
         if isinstance(order, TargetOrder):
             # ADR-014 的「可投资产」,逐字:cash + shares * Open_{T+1}。
             investable = self.account.cash + shares_held * open_price
+            # ── 每股成本含手续费(ADR-007/043 + ADR-016 的 I1 保证)─────────
+            #
+            # 分子是 ADR-014 逐字钉死的「可投资产」,**未改**。改的是**分母**:
+            # 买一股的真实代价不是 `Open` 而是 `Open * (1 + rate)` ——
+            # ADR-043 写明「买入:cash -= shares * price + fee」,故手续费是
+            # 买入现金流的一部分。按 `Open` 作分母会算出一个**买不起**的股数:
+            # `weight=1.0` 且 `rate>0` 时 `gross + fee > investable`,
+            # `Account.apply` 抛 I1「现金不足」而整轮回测中止。
+            #
+            # 为什么这是 ADR 的要求而不是对 ADR-014 的偏离:
+            #   * ADR-010/016 明文「I1 是不变式,**不该靠运气成立**」、
+            #     「本方案下**永不超买**」—— 按 `Open` 作分母使该保证为假,
+            #     而 `account.py` 的注释正依赖它(「真实的负现金只会是浮点残差」)。
+            #   * `weight=1.0` 在 ADR-015 的闭区间内(T2 的门断言它**不报错**),
+            #     `--fee R` 是 ADR-017/039 的合法参数 —— 两者都合法,组合却中止
+            #     回测,那是缺陷而非设计。
+            #   * ADR-014 钉死的是**「可投资产」的定义**(`cash + shares*Open`,
+            #     即本式的**分子**),它没有、也无法规定每股成本忽略手续费。
+            #
+            # 向后兼容:`rate == 0.0`(ADR-007 的默认值)时 `1 + rate == 1`,
+            # 本式与旧式**逐位相同** —— T4 全部钉死 fixture(adr016_* /
+            # adr014_* / adr012_* / adr041_*)的 `fee_rate` 均为 0,故它们的
+            # 期望值一个未动。
+            cost_per_share = open_price * (1.0 + self.fee_rate)
             # ADR-012:floor。`math.floor` 而不是 `int()`:两者对正数相同,
             # 但 `int()` 是朝零截断,负数上与 floor 分叉 —— 目标股数恒 >= 0
             # (weight >= 0 由 ADR-015 保证),故此刻等价,但写 floor 才是
             # ADR-012 说的那件事,也不会在 v1 引入 weight 的负值时静默改语义。
-            target_shares = math.floor(order.weight * investable / open_price)
+            target_shares = math.floor(order.weight * investable / cost_per_share)
             delta = target_shares - shares_held
         else:
             # ADR-014:`order(shares=n)` 的差额就是 `n` 本身。

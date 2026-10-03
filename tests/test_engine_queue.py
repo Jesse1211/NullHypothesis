@@ -822,13 +822,22 @@ def test_adr041_last_call_zero_delta_discards_everything(
 
     bt = Backtest(cash=fx["cash"], fee=0.0)
     pushed = count_pushes(monkeypatch)
-    fills_before: list[int] = []
+    #: 每根 K 线「出队前」的队列长度。此前本列表被收集却从未断言 —— 一个
+    #: 死局部变量看起来像覆盖,实际什么也没钉死。
+    queue_len_before_resolve: list[int] = []
 
     def sample(phase: str, queue: list[Any]) -> None:
         if phase == "before_resolve":
-            fills_before.append(len(queue))
+            queue_len_before_resolve.append(len(queue))
 
     fills = drive(bt, make_strategy(script), bars, on_sample=sample)
+
+    # 出队前的队列长度逐根钉死:第 0 根空(还没人下单);第 1 根与第 2 根
+    # 各有**恰好一个**昨天入队的订单(I4 的上界 + 「队列真的存在」的下界)。
+    # 第 2 根那一个正是末次胜出的零差额 TargetOrder —— 它必须被出队并丢弃,
+    # 不得留在队列里(那会是 GTC,OQ-06 ⑤ 留给 v1)。
+    assert queue_len_before_resolve == [0, 1, 1]
+    assert bt.queue == [], "循环结束后队列必须是空的(ADR-005 的 discard_queue)"
 
     # 第 0 根入队 1 次(target 0.5);第 1 根的两次调用在策略侧收敛为 1 个意图,
     # 故 enqueue 最多再被调 1 次 —— 而那一次入的是末次的 TargetOrder。
@@ -884,8 +893,32 @@ def test_adr041_zero_delta_day_adds_no_push_and_no_fill(
     assert [type(p).__name__ for p in pushed] == ["TargetOrder"]
     assert fill is None, f"expect_fills_added == 0,实得 {fill}"
     assert bt.shares == fx["after_target_half_shares"]
-    # fixture 的 expect_push_count 说的是「不该下单的那个单」—— ShareOrder。
+    assert bt.cash == pytest.approx(fx["after_target_half_cash"])
+
+    # ── `expect_push_count == 0` 的可满足部分 + 同一处人工裁决 ────────────
+    #
+    # fixture 的 `expect_push_count: 0` 对 **ShareOrder** 可逐字满足,且这正是
+    # 门的理由段要抓的那件事:「先前的 `order(100)` 必须被**丢弃**而非回退
+    # 执行」。下面这条断言就是它。
     assert len([p for p in pushed if isinstance(p, ShareOrder)]) == fx["expect_push_count"]
+
+    # 但末次胜出的那个 **TargetOrder** 仍然入队 1 次,故**总**入队数是 1 而非 0。
+    # 根因与本文件「ADR-008 三条分解」节顶部那个待裁决冲突**完全同一**:
+    # ADR-016 规定 `TargetOrder` 入队时只存 `weight`、不存股数,而「差额为 0」
+    # 要到 T+1 开盘用那天的 `Open` 才知道(此处 `current_weight = 0.5` 的差额
+    # 为 0 恰恰是**出队时**算出来的)。要让总入队数为 0,只能在 T 日收盘用
+    # Close 预筛 —— 那条路已实测会静默吞掉本该成交的订单(见该节),违反
+    # ADR-016/020 与 §7 第 1 条。
+    #
+    # 故此处断言「零差额**不产生成交**、且被覆盖的 ShareOrder **未入队**」
+    # —— 两者都是门的理由段指名要抓的,且都对错误实现可证伪(「执行最后一个
+    # 非零差额订单」的实现会在此成交 100 股而变红)。「总 push_count == 0」
+    # 的字面形式与 ADR-016 结构冲突,已按 §7 第 5 条上报待裁决。
+    total_pushes_in_that_day = len(pushed)
+    assert total_pushes_in_that_day == 1, (
+        "ADR-041 的末次 TargetOrder 必须入队恰 1 次(其零差额只能在出队时发现);"
+        f"实得 {total_pushes_in_that_day}"
+    )
 
 
 # ═════════════════════════ I4 + 队列同一性 ═════════════════════════
@@ -929,6 +962,14 @@ def test_i4_queue_length_sampled_at_both_points_and_identity_preserved():
     )
     assert saw_length_one, "队列必须真的装过订单(ADR-006:信号与成交分离的物理载体)"
     assert len(fills) == len(bars) - 1  # 最后一根的单按 ADR-005 丢弃
+
+    # `sampled_before_resolve` 此前被收集却从未断言(死局部变量)。钉死它:
+    # 第 0 根出队前队列为空,其后每根**恰好**装着昨天那一个 ShareOrder。
+    # 这把「至少一个采样点 len == 1」从存在命题加强为**逐根**命题 —— 一个
+    # 只在首根入队、其后绕过队列的实现会在此变红。
+    assert [len(q) for q in sampled_before_resolve] == [0] + [1] * (len(bars) - 1)
+    for q in sampled_before_resolve[1:]:
+        assert isinstance(q[0], ShareOrder) and q[0].shares == 1
 
 
 def test_enqueued_order_object_is_the_same_object_dequeued_next_bar(
@@ -1216,6 +1257,171 @@ def test_fee_default_is_zero_and_negative_rate_is_rejected():
         Backtest(cash=1.0, fee=-0.001)
     with pytest.raises(ValueError, match="有限数"):
         Backtest(cash=1.0, fee=float("nan"))
+
+
+# ┌─ `target()` × 非零费率 —— 本文件此前的盲点 ────────────────────────────┐
+# │                                                                        │
+# │ T4 的全部钉死 fixture(`adr016_*` / `adr014_*` / `adr012_*` /          │
+# │ `adr041_*`)的费率都是 **0**(`adr014_denominator_three_way` 的        │
+# │ `fee_rate: 0.0` 是唯一写出来的那个),而唯一的非零费率门               │
+# │ (`test_fee_is_charged_both_directions_with_shadow_arithmetic`)        │
+# │ 只用 `order(shares=)` —— 它**绕过**目标股数公式。于是「定量时漏掉     │
+# │ 手续费」在全门之下不可观测。                                           │
+# │                                                                        │
+# │ 这正是 §5 T3 门已经点名的那条纪律:「**必须用非零费率                  │
+# │ `rate = 0.001`** —— `rate=0` 时手续费方向错误、漏算、双算全部不可      │
+# │ 观测」。目标股数公式归 T4,故同一纪律在此适用。                        │
+# │                                                                        │
+# │ 下面两条门的期望值全部**手工算在本文件内**(T3/T4 的同一隔离要求):   │
+# │ `rate` 字面写死 `0.001`,不读 `fill.fee`、不调被测代码算期望值。        │
+# └────────────────────────────────────────────────────────────────────────┘
+
+
+def test_target_full_position_under_nonzero_fee_stays_affordable():
+    """ADR-010/016 的「永不超买」在 `weight=1.0` + `rate>0` 下必须成立。
+
+    `weight=1.0` 在 ADR-015 的闭区间内(T2 的门断言它**不报错**),
+    `--fee R` 是 ADR-017/039 的合法参数 —— 两者都合法,故其组合**不得**
+    中止回测。ADR-016 的理由段逐字写明「I1 是不变式,**不该靠运气成立**
+    ... 本方案下**永不超买**」,而 `account.py` 的注释正依赖该保证
+    (「真实的负现金只会是浮点残差」)。
+
+    手工算术(`rate` 字面写死):买一股的真实代价是
+    `Open * (1 + rate) = 100 * 1.001 = 100.1`,故
+    `floor(1.0 * 10000 / 100.1) == 99` 股,
+    `gross = 9900`、`fee = 9.9`、`cash_after = 90.1`。
+
+    **显式排除按裸 `Open` 定量的实现**:它给 `floor(10000/100) == 100` 股,
+    成交额 `10000` 加手续费 `10` 共 `10010 > 10000` → `Account.apply` 抛
+    I1 而整轮中止。故本门对 `reject_shares == 100` 做显式不等断言。
+    """
+    rate = 0.001
+    bars = [
+        Bar(Date="2020-01-02", Open=100.0, Close=100.0),
+        Bar(Date="2020-01-03", Open=100.0, Close=100.0),
+    ]
+
+    def script(st: Strategy, i: int) -> None:
+        if i == 0:
+            st.target(weight=1.0)
+
+    bt = Backtest(cash=10000.0, fee=rate)
+    # 不得抛错 —— 这本身就是本门的第一条断言(ADR-020 的「无条件执行」)。
+    fills = drive(bt, make_strategy(script), bars)
+
+    assert len(fills) == 1
+    assert fills[0].side == "BUY"
+    # floor(10000 / (100 * 1.001)) = floor(99.900...) = 99
+    assert fills[0].shares == 99
+    # 按裸 Open 定量的实现:floor(10000/100) = 100 —— 买不起。
+    assert fills[0].shares != 100
+    assert fills[0].price == 100.0
+    assert fills[0].fee == pytest.approx(99 * 100.0 * rate)   # 9.9
+
+    # I1:成交后现金非负,且是手工算出的那个数。
+    assert bt.shares == 99
+    assert bt.cash == pytest.approx(10000.0 - 9900.0 - 9.9)   # 90.1
+    assert bt.cash >= 0.0
+    # 未被 clamp:剩余现金不够再买一股(含费)。
+    assert bt.cash < 100.0 * (1.0 + rate)
+
+
+def test_target_rebalance_up_under_nonzero_fee_stays_affordable():
+    """0.5 → 1.0 的加仓在非零费率下也必须买得起(同上,但**已持仓**)。
+
+    从空仓起只检验分母里的 `cash`;已持仓时分母是 ADR-014 的
+    `cash + shares * Open`,故再测一次「加仓到满仓」才覆盖那条路径。
+
+    手工算术(`rate = 0.001` 字面写死,`cash = 20000`、`Open = 10` 恒定):
+
+      * 第 1 腿 `target(0.5)`:`floor(0.5 * 20000 / (10 * 1.001))`
+        `= floor(999.000...) = 999` 股;`gross = 9990`、`fee = 9.99`,
+        故 `cash_1 = 20000 - 9990 - 9.99 = 10000.01`。
+      * 第 2 腿 `target(1.0)`:可投资产 `= 10000.01 + 999 * 10 = 19990.01`
+        (ADR-014,用成交日的 `Open`);
+        `floor(19990.01 / 10.01) = floor(1997.00...) = 1997` 股,
+        差额 `= 1997 - 999 = +998`;`gross = 9980`、`fee = 9.98`,
+        故 `cash_2 = 10000.01 - 9980 - 9.98 = 10.03`。
+
+    **这组数把按裸 `Open` 定量的实现逼到中止**:它给
+    `floor(19990.01 / 10) = 1999` 股、差额 `+1000`、代价
+    `1000 * 10 * 1.001 = 10010 > 10000.01` → I1 抛错。故本门既断言终局
+    持仓 `== 1997`、显式 `!= 1999`,也断言整轮**不抛错**。
+    """
+    rate = 0.001
+    bars = [
+        Bar(Date="2020-01-02", Open=10.0, Close=10.0),
+        Bar(Date="2020-01-03", Open=10.0, Close=10.0),
+        Bar(Date="2020-01-06", Open=10.0, Close=10.0),
+    ]
+
+    def script(st: Strategy, i: int) -> None:
+        if i == 0:
+            st.target(weight=0.5)
+        elif i == 1:
+            st.target(weight=1.0)
+
+    bt = Backtest(cash=20000.0, fee=rate)
+    fills = drive(bt, make_strategy(script), bars)
+
+    assert [f.side for f in fills] == ["BUY", "BUY"]
+    # 第 1 腿:floor(0.5 * 20000 / 10.01) = 999
+    assert fills[0].shares == 999
+    assert fills[0].fee == pytest.approx(999 * 10.0 * rate)       # 9.99
+    # 第 2 腿:差额 +998(目标 1997 减持仓 999)
+    assert fills[1].shares == 998
+    assert fills[1].fee == pytest.approx(998 * 10.0 * rate)       # 9.98
+
+    # 终局持仓:1997 股,**不是**按裸 Open 定量的 1999(那个买不起)。
+    assert bt.shares == 1997
+    assert bt.shares != 1999
+    # 手工累加的现金(ADR-043:买入 cash -= gross + fee,逐腿)。
+    shadow = 20000.0 - (9990.0 + 9.99) - (9980.0 + 9.98)
+    assert bt.cash == pytest.approx(shadow)                       # 10.03
+    assert bt.cash >= 0.0
+    # 这里**不**断言「余额不足一股」—— 从空仓起才有那个性质(见上一条门)。
+    # 加仓时分母是 ADR-014 的可投资产 `cash + shares * Open`,而第 1 腿的
+    # 手续费 9.99 已沉没:那笔钱不在 `cash` 里了,却仍以 999 股的形式计入
+    # 可投资产,故 `floor` 后余下的现金可以略超一股价。§5 T4 也只把
+    # 「成交后 cash < 一股价格」绑在 ADR-012 的 `Open=300` fixture 上
+    # (该条款自述:作为独立条款曾是错的),本门不越界复制它。
+
+
+def test_target_sizing_never_overbuys_across_a_rate_sweep():
+    """「永不超买」是对**所有**合法 `(weight, rate)` 的全称命题,不只两点。
+
+    上面两条门钉死了两组具体数值;本门检验那条保证不是在这两点上碰巧成立。
+    `weight` 取 ADR-015 闭区间 `[0, 1]` 内的值,`rate` 取 ADR-039 允许的
+    `rate >= 0` 中的几档(含 ADR-007 的默认 `0.0`)。
+
+    断言只有两条、都不复用被测算术:**不抛错**,且成交后 `cash >= 0`
+    (I1,ADR-010)。*(这不是在算期望股数 —— 那是上面两条门的事。)*
+    """
+    for rate in (0.0, 0.0005, 0.001, 0.01, 0.05):
+        for weight in (0.0, 0.25, 0.5, 0.75, 0.99, 1.0):
+            for cash0, price in ((10000.0, 100.0), (20000.0, 10.0), (7777.0, 33.0)):
+                bars = [
+                    Bar(Date="2020-01-02", Open=price, Close=price),
+                    # 第 2 根跳空(ADR-020:仍无条件执行),使分母里的
+                    # `shares * Open` 换一个量级。
+                    Bar(Date="2020-01-03", Open=price * 1.5, Close=price * 1.5),
+                    Bar(Date="2020-01-06", Open=price * 0.7, Close=price * 0.7),
+                ]
+
+                def script(st: Strategy, i: int) -> None:
+                    # 每天都 re-target 到同一个 weight:ADR-008 使不变的
+                    # 差额被跳过,变动的(因跳空)被执行。
+                    st.target(weight=weight)
+
+                bt = Backtest(cash=cash0, fee=rate)
+                drive(bt, make_strategy(script), bars)   # 不得抛错
+
+                assert bt.cash >= 0.0, (
+                    f"I1 被违反(ADR-010/016 的「永不超买」):"
+                    f"rate={rate} weight={weight} cash0={cash0} price={price} "
+                    f"-> cash={bt.cash}"
+                )
+                assert bt.shares >= 0
 
 
 # ═════════════════════════ 值对象与杂项 ═════════════════════════
