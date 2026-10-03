@@ -98,6 +98,19 @@ fixtures:
     expect_shares: 50          # floor(10000/200)
     reject_shares: 100         # 错误实现:按 T 日 Close 锁定 floor(10000/100)
 
+  # ADR-014a:可负担性约束(满仓 + 非零费率时的超买修正)
+  adr014a_affordability:
+    cash: 100000.0
+    fee_rate: 0.0013
+    open: 27.07
+    weight_full: 1.0
+    pinned_formula_shares: 3694      # floor(100000/27.07) —— 超买
+    pinned_total_cost: 100126.58     # gross+fee,超支 126.58
+    expect_shares_full: 3689         # 递减后
+    weight_half: 0.5
+    expect_shares_half: 1847         # 与原公式一致 —— 约束不触发
+    reject_divisor_change_half: 1844 # 改除数的错误实现会给这个
+
   # ADR-014:分母是可投资产,三向可分
   adr014_denominator_three_way:
     cash: 10000.0

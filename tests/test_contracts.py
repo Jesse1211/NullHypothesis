@@ -299,3 +299,35 @@ def test_trades_csv_header_matches_fill_fields_plus_ledger(c):
     header = c["trades_csv_header"]
     assert header[:5] == ["date", "side", "shares", "price", "fee"]
     assert header[5:] == ["cash_after", "shares_after"]
+
+
+def test_adr014a_affordability_constraint(c):
+    """ADR-014a:满仓 + 非零费率时钉死的公式会超买破坏 I1。
+    T4 的 Dev 发现了这个设计缺陷 —— 设计期从未测试这个组合。
+    修法必须只在真正买不起时生效,不得改变本来合法的成交。"""
+    f = c["fixtures"]["adr014a_affordability"]
+    pinned = lambda w: math.floor(w * f["cash"] / f["open"])
+
+    # 原公式在满仓时确实超买
+    assert pinned(f["weight_full"]) == f["pinned_formula_shares"]
+    cost = pinned(f["weight_full"]) * f["open"] * (1 + f["fee_rate"])
+    assert round(cost, 2) == f["pinned_total_cost"]
+    assert cost > f["cash"], "必须真的超支,否则这个 fixture 测不到东西"
+
+    # 递减约束
+    def fixed(w):
+        t = pinned(w)
+        while t > 0 and t * f["open"] * (1 + f["fee_rate"]) > f["cash"]:
+            t -= 1
+        return t
+
+    assert fixed(f["weight_full"]) == f["expect_shares_full"]
+    assert fixed(f["weight_full"]) * f["open"] * (1 + f["fee_rate"]) <= f["cash"]
+
+    # 关键:半仓时必须与原公式完全一致 —— 约束不得影响本来合法的成交
+    assert fixed(f["weight_half"]) == f["expect_shares_half"] == pinned(f["weight_half"])
+
+    # 改除数的错误实现会在半仓处漂移
+    divisor_changed = math.floor(f["weight_half"] * f["cash"] / (f["open"] * (1 + f["fee_rate"])))
+    assert divisor_changed == f["reject_divisor_change_half"]
+    assert divisor_changed != f["expect_shares_half"], "两种修法必须可分辨"
