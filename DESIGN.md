@@ -135,13 +135,32 @@
 2. **与日线数据的物理约束一致**:日线里「收盘后的下一个真实可成交时刻」就是次日开盘。*(该问题在分钟级/逐笔回测中不存在 —— 那里决策与成交相隔毫秒。T+1 开盘成交是**日线**的产物。)*
 3. **使用者的明确选择**:方案「T 日 Close 成交」被拒绝,理由是其理想化(收盘后才知道的价格,却假设能按它成交)。
 
-#### 未解决:同一根 K 线成交在物理上是否可能
+#### 已核实:同一根 K 线成交在物理上不可实现
 
-**待查(本会话无法回答)**:若 MOC(market-on-close)订单必须在收盘**之前**提交(推测 NYSE 约 15:50 ET),则提交时收盘价未知 → 「用 T 日 Close 决策、再按 T 日 Close 成交」**物理上不可实现**,那它就不是另一种惯例而是模拟一件不可能的事。
+**美股收盘集合竞价时间线(美东时间),多源一致:**
 
-**该推断未经核实。** 本会话所有 agent 类型均无网络工具(已探测确认),交易所规则书不在 GitHub 上。按 §7 第 3 条标注为**推断**,不作为本 ADR 的依据。要定性此问,需在可联网环境核 NYSE/Nasdaq 的 MOC 截止时间。
+| 关口 | Nasdaq Closing Cross | NYSE Closing Auction |
+|---|---|---|
+| 新 MOC 单可提交至 | **15:55 之前** | **15:50 之前** |
+| 新 LOC 单可提交至 | 15:58 之前 | 15:50 之前 |
+| 撤改在场 on-close 单 | **15:50 之前** | **15:50 之前** |
+| 集合竞价成交(收盘价产生) | **16:00** | **16:00** |
 
-**本 ADR 不依赖该答案** —— 上面三条依据已足够。
+**决定性推论**:MOC 订单必须在 **15:50–15:55** 之前提交,而收盘价在 **16:00** 才产生。提交订单的那一刻,**收盘价尚不存在**。且 15:50 起 on-close 单**不可撤改**。
+
+**因此:用 T 日 `Close` 作为决策输入、再按 T 日 `Close` 成交,物理上不可实现。** 它不是一种更激进的惯例,而是在模拟一件做不到的事 —— 这与 backtrader 把它称为「作弊」(*"the bar is closed"*)的判断一致。
+
+**反方检查(是否存在「先看到官方收盘价、再按该价成交」的机制)**:NYSE 在 15:50–16:00 的 Imbalance Freeze 期间**仅**允许针对已公布 Significant Imbalance 的**反向**挂单 —— 那是给已公布失衡提供流动性,不是自由按收盘价成交,且此时收盘价仍未产生。未发现任何允许「观察到官方收盘价后仍按该价成交」的机制。
+
+**溯源**(经 GitHub 代码搜索定位到的引用链,均指向交易所一手文件):
+
+- Nasdaq Equity Rule **4754**(Nasdaq Closing Cross),经 SR-NASDAQ-2018-052 修订(SEC Release 34-84454,2018-10 批准)—— 该修订把 LOC 截止延至 15:58 并引入迟到 LOC 的重定价
+- Nasdaq *Opening and Closing Crosses FAQ*(2025)Q7/Q8/Q10/Q17/Q20/Q25
+- NYSE Rule **7.35B**(Closing Auction; Closing Auction Imbalance Freeze)
+- NYSE *Opening and Closing Auctions Fact Sheet*(2024),"Closing order types" / "Closing timeline"
+- 券商侧交叉验证(各自截止时间**早于**交易所,留路由时间):IBKR 交易课程(NYSE 15:50 / Nasdaq MOC 15:55 / LOC 15:58)、Fidelity 帮助页(on-close 须 15:40 前,且 *"Nasdaq does not accept on the close orders"*)、Alpaca(post-15:50 拒单)
+
+**本会话无网络工具**(已对所有 agent 类型探测确认),上述条目经 GitHub 代码搜索在公开仓库中定位,**交易所原文 URL 未经本会话直接 fetch**。数值在多个独立来源间一致(方向无分歧:全部严格早于 16:00),但按 §7 第 3 条,若要作为对外引用请复核一手 PDF。
 
 ### ADR-003 · 估值:equity = cash + shares × Close
 
