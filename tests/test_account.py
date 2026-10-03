@@ -547,14 +547,22 @@ def test_adr009_no_short_via_negative_shares_in_fill() -> None:
 
     若账本接受 `BUY` + 负 shares,它就成了一条绕过 ADR-009 的做空通道
     (买入分支会让 `self.shares` 减少,而 I2 的检查点在卖出分支)。
+
+    从**非零持仓**出发,理由同 `test_unknown_side_raises`:空仓时
+    `SELL -10` 会让 `new_shares = 0 - (-10) = +10`,I2 不触发;而 `BUY -10`
+    让 `new_shares` 变 -10,**I2 会代替 shares 校验抛错** —— 于是删掉
+    `if shares <= 0:` 守卫后 BUY 那一支仍绿。持仓 50 时 `BUY -10` 得
+    `new_shares = 40 >= 0`,I2 过,只有 shares 校验能拦住它。
     """
-    acct = Account(cash=10_000.0)
-    with pytest.raises(ValueError):
-        acct.apply(Fill("2020-01-02", BUY, -10, 100.0, 1.0))
-    with pytest.raises(ValueError):
-        acct.apply(Fill("2020-01-02", SELL, -10, 100.0, 1.0))
-    assert acct.shares == 0
-    assert acct.cash == 10_000.0
+    acct = Account(cash=10_000.0, shares=50)
+    for side in (BUY, SELL):
+        with pytest.raises(ValueError) as excinfo:
+            acct.apply(Fill("2020-01-02", side, -10, 100.0, 1.0))
+        assert "shares" in str(excinfo.value), (
+            f"{side} + 负 shares 的报错应指向 `shares`,实得 {str(excinfo.value)!r}"
+        )
+        assert acct.shares == 50
+        assert acct.cash == 10_000.0
 
 
 # ═══════════════════ 非法 Fill:不得被静默吞掉 ═══════════════════
@@ -565,13 +573,71 @@ def test_unknown_side_raises() -> None:
 
     静默忽略会让一个拼错的 side 变成「既不买也不卖」的无声 no-op ——
     账本不动,而 `trades.csv` 里却多一行。
+
+    这个测试必须从**非零持仓 + 充足现金**出发,否则它是空断言:若账本
+    `shares == 0`,一个未知 side 会落进 `else:  # SELL` 分支,并由 **I2
+    守卫**(持仓 0 卖不出 1 股)抛出 `ValueError` —— 于是把 `apply` 里的
+    side 校验整段删掉,测试照样绿。上一轮的门正是用这个变异体(删除 side
+    校验)验出了该缺口:29 个账本测试全过。
+
+    因此本测试双管齐下把两条旁路都堵死:
+      1. 状态:`shares=50` 且现金远超一笔 1 股成交 —— 未知 side 若被当成
+         SELL,持仓够卖(50 >= 1)、I2 过;若被当成 BUY,现金够付、I1 过;
+         两条不变式都无法代替 side 校验抛错。
+      2. 消息:断言错误消息里出现 `side`(I1 的消息讲「现金不足」、I2 的
+         消息讲「卖出股数超过持仓」,都不含该词),使「碰巧抛了个
+         ValueError」不足以通过。
+    并在每个 bad side 后断言账本**状态未变** —— 这同时排除「抛错前已经
+    把 cash/shares 改了」的脏中间态(本模块的「先算后验」契约)。
     """
-    acct = Account(cash=10_000.0)
+    acct = Account(cash=10_000.0, shares=50)
     for bad in ("buy", "sell", "Buy", "SHORT", "", "COVER"):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError) as excinfo:
             acct.apply(Fill("2020-01-02", bad, 1, 100.0, 0.1))
-    assert acct.cash == 10_000.0
-    assert acct.shares == 0
+        message = str(excinfo.value)
+        assert "side" in message, (
+            f"side={bad!r} 的报错必须指向 `side` 本身,实得 {message!r} —— "
+            f"若它来自 I1/I2 守卫,说明该测试没有真正行使 side 校验"
+        )
+        # 非法成交整笔不发生(先算后验):状态必须与循环开始时逐字相同。
+        assert acct.cash == 10_000.0
+        assert acct.shares == 50
+
+    # 同一账本随后的**合法**成交仍精确记账 —— 被拒的那几笔没留下任何残留。
+    acct.apply(make_fill("2020-01-05", SELL, 10, 100.0))
+    assert acct.shares == 40
+    assert acct.cash == pytest.approx(10_000.0 + 1_000.0 - 1_000.0 * RATE, abs=TOL)
+
+
+def test_unknown_side_is_not_rescued_by_invariant_guards() -> None:
+    """未知 side 在**四种**不变式组合下都必须由 side 校验拦住。
+
+    `test_unknown_side_raises` 固定了一个「两条不变式都过」的状态。本测试
+    补上其余三种:side 校验必须在 I1/I2 **之前**生效,否则一个未知 side 的
+    报错原因会随账本状态漂移 —— 空仓时报「持仓不足」、缺钱时报「现金不足」
+    —— 调用方(T4)拿到的诊断就指错了方向,而真正的病因是一个拼错的常量。
+
+    注意这里的断言是**消息内容**,不只是「抛了 ValueError」:三种状态下
+    I1/I2 本来就会抛错,只断言异常类型的话本测试同样是空断言。
+    """
+    bad = "SHORT"
+    states = [
+        # (cash, shares, 说明)
+        (10_000.0, 50, "现金足、持仓足:I1/I2 都不会抛"),
+        (10_000.0, 0, "现金足、空仓:若落进 SELL 分支,I2 会抛"),
+        (0.0, 50, "无现金、持仓足:若落进 BUY 分支,I1 会抛"),
+        (0.0, 0, "无现金、空仓:I1/I2 任一都可能抛"),
+    ]
+    for cash, shares, why in states:
+        acct = Account(cash=cash, shares=shares)
+        with pytest.raises(ValueError) as excinfo:
+            acct.apply(Fill("2020-01-02", bad, 1, 100.0, 0.1))
+        message = str(excinfo.value)
+        assert "side" in message, (
+            f"{why}:未知 side 的报错应指向 `side`,实得 {message!r}"
+        )
+        assert acct.cash == cash
+        assert acct.shares == shares
 
 
 def test_zero_share_fill_raises() -> None:
@@ -617,6 +683,90 @@ def test_negative_price_raises() -> None:
     acct = Account(cash=10_000.0)
     with pytest.raises(ValueError):
         acct.apply(Fill("2020-01-02", BUY, 1, -100.0, 0.0))
+
+
+def test_non_numeric_shares_raise() -> None:
+    """`shares` 不是数 → 报错(不是 `TypeError`,也不是静默转换)。
+
+    `"10"` 最危险:`int("10")` 会成功,于是一个把股数当字符串传的上游
+    (CSV 直读、JSON 反序列化)会被静默接纳,而 `shares * price` 在
+    `str * float` 上才炸,错误出现在离病因很远的地方。
+    `None` / `list` 则会让 `self.shares` 变成非 int,污染 I2 的比较。
+    """
+    for bad in ("10", None, [10], 10 + 0j):
+        acct = Account(cash=10_000.0, shares=50)
+        with pytest.raises(ValueError) as excinfo:
+            acct.apply(Fill("2020-01-02", BUY, bad, 100.0, 0.1))  # type: ignore[arg-type]
+        assert "shares" in str(excinfo.value)
+        assert acct.shares == 50
+        assert acct.cash == 10_000.0
+
+
+def test_bool_shares_raise_not_treated_as_one() -> None:
+    """`shares=True` → 报错,而不是「1 股」。
+
+    `bool` 是 `int` 的子类,所以一个幼稚的 `isinstance(value, int)` 会让
+    `True` 悄悄变成 1 股成交。股数来自上游的取整计算,一个布尔值到这里
+    只能是逻辑错误(例如把「要不要买」误传成「买多少」)。
+    """
+    acct = Account(cash=10_000.0, shares=50)
+    with pytest.raises(ValueError):
+        acct.apply(Fill("2020-01-02", BUY, True, 100.0, 0.1))  # type: ignore[arg-type]
+    assert acct.shares == 50, "True 不得被当成 1 股"
+    assert acct.cash == 10_000.0
+
+
+def test_i1_tolerance_accepts_float_residue_but_not_real_overdraft() -> None:
+    """I1 的容差只覆盖**浮点残差**,不覆盖真实透支(上一轮记录在案的缺口)。
+
+    两侧都必须测,否则容差的宽度不可观测:
+      * 容差**太紧**(严格 `new_cash < 0`)会把一笔「正好花光现金」的合法
+        成交(ADR-012 的 `floor` 恰好用尽余额是设计预期)报成透支;
+      * 容差**太松**(例如放到 1.0)会让真实的一块钱透支静默通过,ADR-010
+        的「v0 无杠杆、全额付款」就失守了。
+    这里用 `cash` 与成交额的差额直接构造两侧的值,不 import 被测模块的
+    `EPSILON`(隔离要求:容差在本文件内字面写死为 TOL=0.01)。
+    """
+    # ── 负侧残差(-0.005,在 0.01 容差内)→ 接受,且 cash 夹到 0 ──────
+    acct = Account(cash=1_000.0)
+    # 成交额 + fee = 1000.005 → new_cash = -0.005
+    acct.apply(Fill("2020-01-02", BUY, 10, 100.0, 0.005))
+    assert acct.shares == 10
+    assert acct.cash == pytest.approx(0.0, abs=TOL)
+    assert acct.cash >= 0.0, "I1:容差内的负残差必须夹到 0,不得留下负现金"
+
+    # ── 真实透支(-0.02,超出容差)→ 报错 ────────────────────────────
+    acct2 = Account(cash=1_000.0)
+    with pytest.raises(ValueError) as excinfo:
+        acct2.apply(Fill("2020-01-02", BUY, 10, 100.0, 0.02))
+    assert "I1" in str(excinfo.value)
+    assert acct2.cash == 1_000.0, "被拒的成交不得改动现金"
+    assert acct2.shares == 0
+
+
+def test_rejected_fill_leaves_ledger_exact_for_the_next_one() -> None:
+    """被拒的成交之后,**后续一笔仍精确记账**(上一轮记录在案的缺口)。
+
+    「先算后验、验不过不改」只有配上这条才完整:只断言被拒那一笔的状态
+    不变,仍可能漏掉「抛错前改了某个累计量」这类残留。这里让一笔超支的
+    买入被拒,再做一笔**合法**买入,并用影子账本独立算出期望值。
+    """
+    acct = Account(cash=2_000.0)
+    shadow = ShadowLedger(cash=2_000.0)
+
+    # 1) 超支买入被拒(100 股 @100 = 10000 > 2000)。影子**不**记这一笔。
+    with pytest.raises(ValueError):
+        acct.apply(make_fill("2020-01-02", BUY, 100, 100.0))
+    assert acct.cash == 2_000.0
+    assert acct.shares == 0
+
+    # 2) 合法买入必须精确 —— 不多扣、不少扣被拒那一笔的任何部分。
+    shadow.buy(10, 100.0)
+    acct.apply(make_fill("2020-01-03", BUY, 10, 100.0))
+    assert acct.shares == shadow.shares == 10
+    assert acct.cash == pytest.approx(shadow.cash, abs=TOL)
+    # 否证值:若被拒那笔的 gross 或 fee 漏进了账本,cash 会偏离这个数。
+    assert acct.cash == pytest.approx(2_000.0 - 1_000.0 - 1.0, abs=TOL)
 
 
 def test_negative_close_in_equity_at_raises() -> None:
