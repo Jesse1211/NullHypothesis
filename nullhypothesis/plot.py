@@ -119,6 +119,28 @@ def _thin_xticks(ax, dates: list[str], max_ticks: int = 8) -> None:
     ax.tick_params(axis="x", rotation=45, labelsize=8)
 
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _rel(path: Path) -> str:
+    """归档路径一律转成【仓库相对、POSIX 斜杠】的字符串(ADR-038)。
+
+    ADR-038 把 `png_path` 钉死为 `out/<run_id>/<stem>_equity.png`,而本函数
+    此前直接 `str(out_dir / name)` —— 于是路径形态取决于调用方传了什么:
+    CLI 传 `--out out/` 得到相对路径,阶段二的 API 传 `ROOT / "out"` 得到
+    **绝对**路径,两者都会原样进 `run.json`。而 `GET /api/runs/{id}` 逐字段
+    返回该文件、前端又拿它当 `<img src>` —— 绝对文件系统路径在浏览器里取不到。
+    故在「路径变成字符串」这唯一一处归一化。
+
+    落在仓库外的 `--out`(用户给了绝对路径)无法表达为仓库相对,原样返回。
+    """
+    path = Path(path).resolve()
+    try:
+        return path.relative_to(_REPO_ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
 def write(report: RunReport, out_dir: Path) -> dict[str, str]:
     """写 PNG 与 trades.csv,返回各 png 的路径。
 
@@ -145,14 +167,14 @@ def write(report: RunReport, out_dir: Path) -> dict[str, str]:
     for r in report.results:
         png = out / fn["equity_png"].format(stem=r.strategy)
         _equity_png(r, png)
-        paths[r.strategy] = str(png)
+        paths[r.strategy] = _rel(png)
         _write_trades_csv(r, out / fn["trades_csv"].format(stem=r.strategy))
 
     # ADR-037:`comparison.png` **仅多策略时产生**。
     if len(report.results) > 1:
         comp = out / fn["comparison_png"]
         _comparison_png(report.results, comp)
-        paths["comparison"] = str(comp)
+        paths["comparison"] = _rel(comp)
     else:
         paths["comparison"] = None  # type: ignore[assignment]
 

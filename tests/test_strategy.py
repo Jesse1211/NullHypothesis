@@ -739,8 +739,12 @@ def test_loader_uses_importlib_and_never_exec_eval_compile():
 
 def test_grep_tripwire_over_whole_backend_is_satisfiable():
     """T9 的门会对**整个后端** grep。T2 现在就证明自己不会让它失败。"""
+    # 前置 `[^.\w]` 排除**属性访问**:ADR-036 禁的是 builtins 的 exec/eval/
+    # compile,不是 `re.compile(` 或 `spec.loader.exec_module`。不排除的话
+    # `\bcompile\(` 会命中 `re.compile(` —— `.` 本身就是词边界,这正是
+    # DESIGN.md 说 tripwire「需用词边界才不误报」指的那个误报。
     out = subprocess.run(
-        ["grep", "-rnE", r"\bexec\(|\beval\(|\bcompile\(", "--include=*.py", "."],
+        ["grep", "-rnE", r"(^|[^.\w])(exec|eval|compile)\(", "--include=*.py", "."],
         cwd=ROOT, capture_output=True, text=True,
     )
     offenders = [
