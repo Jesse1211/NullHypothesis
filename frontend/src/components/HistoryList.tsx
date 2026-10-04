@@ -5,7 +5,7 @@
  */
 
 import type { ArchivedRun, RunListItem } from '../types'
-import { money } from '../format'
+import { money, pngUrl } from '../format'
 
 export interface HistoryListProps {
   runs: RunListItem[]
@@ -47,15 +47,21 @@ export default function HistoryList({ runs, selected, onSelect }: HistoryListPro
           {selected.results.map((r) => (
             <figure key={r.strategy}>
               <figcaption>{r.strategy} · 期末 {money(r.summary.final_equity)}</figcaption>
-              {/* 归档快照,不是 Recharts(ADR-032) */}
-              <img src={`/${r.png_path}`} alt={`${r.strategy} 净值曲线`} />
+              {/* 归档快照,不是 Recharts(ADR-032);URL 见 ADR-045 */}
+              <img
+                src={pngUrl(selected.run_id, r.png_path)}
+                alt={`${r.strategy} 净值曲线`}
+              />
             </figure>
           ))}
 
           {selected.comparison_png_path && (
             <figure>
               <figcaption>对比</figcaption>
-              <img src={`/${selected.comparison_png_path}`} alt="多策略对比" />
+              <img
+                src={pngUrl(selected.run_id, selected.comparison_png_path)}
+                alt="多策略对比"
+              />
             </figure>
           )}
         </div>

@@ -795,3 +795,87 @@ def test_unknown_but_wellformed_run_id_is_404(client, isolated_out):
     r = client.get("/api/runs/20991231-235959")
     assert r.status_code == 404
     assert r.json()["code"] == "NOT_FOUND"
+
+# ════════════════ ADR-045 · 归档 PNG 的专用端点 ════════════════
+
+
+def test_png_endpoint_serves_the_archived_image(client, isolated_out):
+    """ADR-045:`out/` 不是静态目录,图像经专用端点。"""
+    run_id, d = _make_archive(isolated_out, [STRAT_A])
+    name = f"{Path(STRAT_A).stem}_equity.png"
+    assert (d / name).is_file(), "前提:归档里确实有这张图"
+
+    r = client.get(f"/api/runs/{run_id}/png/{name}")
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "image/png"
+    # 真的是 PNG,不是把 JSON 错误体当图片发出去。
+    assert r.content[:8] == b"\x89PNG\r\n\x1a\n"
+    assert r.content == (d / name).read_bytes()
+
+
+def test_png_endpoint_serves_the_comparison_image(client, isolated_out):
+    run_id, _ = _make_archive(isolated_out, [STRAT_A, STRAT_B])
+    r = client.get(f"/api/runs/{run_id}/png/comparison.png")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"
+
+
+def test_png_endpoint_name_is_a_whitelist_from_run_json(client, isolated_out):
+    """`name` 的白名单来自该归档 `run.json` 声明的图名集合。
+
+    归档里**真实存在**但未被 `run.json` 声明为图像的文件(如 trades.csv、
+    summary.json)不得通过这个端点取出 —— 否则它就是个任意文件读取口。
+    """
+    run_id, d = _make_archive(isolated_out, [STRAT_A])
+    # 只断言 `_make_archive` 真的会产生的那些文件 —— 它调 plot.write +
+    # write_run_json,但**不**调 report.render,故没有 summary.txt/json。
+    leaked = [f"{Path(STRAT_A).stem}_trades.csv", "run.json"]
+    for name in leaked:
+        assert (d / name).is_file(), f"前提:{name} 确实在归档里"
+        r = client.get(f"/api/runs/{run_id}/png/{name}")
+        assert r.status_code == 404, f"{name} 被当成图像取出了"
+
+
+def test_png_endpoint_single_strategy_has_no_comparison(client, isolated_out):
+    """单策略归档的 `comparison_png_path` 是 `None` → 不在白名单里。"""
+    run_id, _ = _make_archive(isolated_out, [STRAT_A])
+    assert client.get(f"/api/runs/{run_id}/png/comparison.png").status_code == 404
+
+
+@pytest.mark.parametrize("bad_id", [
+    "../../etc/passwd", "abc", "20261003", "C:\\Windows\\Temp",
+])
+def test_png_endpoint_rejects_bad_run_ids(bad_id, client, isolated_out):
+    r = client.get(f"/api/runs/{bad_id}/png/x_equity.png")
+    assert r.status_code in (400, 404, 422), f"{bad_id!r} → {r.status_code}"
+
+
+@pytest.mark.parametrize("bad_name", [
+    "../run.json", "../../contracts.yaml", "..%2frun.json",
+    "/etc/passwd", "....//run.json",
+])
+def test_png_endpoint_rejects_traversal_in_name(bad_name, client, isolated_out):
+    """`name` 也必须是白名单 —— `<stem>` 由用户提供的策略文件名决定。"""
+    run_id, _ = _make_archive(isolated_out, [STRAT_A])
+    r = client.get(f"/api/runs/{run_id}/png/{bad_name}")
+    assert r.status_code in (400, 404, 422), f"{bad_name!r} → {r.status_code}"
+    assert b"contracts" not in r.content.lower() or r.status_code != 200
+
+
+def test_out_dir_is_not_mounted_as_a_static_directory():
+    """ADR-045 的**反向**断言:`out/` 不得被挂成静态目录。
+
+    挂了的话归档就成了可枚举的静态资源,而本端点的白名单全被绕过。
+    """
+    src = (ROOT / "api.py").read_text(encoding="utf-8")
+    mounts = [ln for ln in src.splitlines() if "app.mount(" in ln]
+    for ln in mounts:
+        assert '"out"' not in ln and "'out'" not in ln and "OUT_DIR" not in ln, (
+            f"out/ 被挂成静态目录了(违反 ADR-045):{ln.strip()}"
+        )
+
+
+def test_png_endpoint_404_for_unknown_run(client, isolated_out):
+    r = client.get("/api/runs/20991231-235959/png/x_equity.png")
+    assert r.status_code == 404
+    assert r.json()["code"] == "NOT_FOUND"

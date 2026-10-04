@@ -35,3 +35,14 @@ export function integer(n: number): string {
 export function orNull(s: string | null): string {
   return s === null || s === undefined || s === '' ? NULL_DISPLAY : s
 }
+
+/** 归档图像的 URL(ADR-045)。
+ *
+ * `png_path` 是归档里的**相对路径**(`out/<run_id>/<stem>_equity.png`),
+ * 而 `out/` 不是静态目录 —— 图像走专用端点。这里只取文件名再拼端点 URL,
+ * 属 ADR-025 允许的路径拼接,不是金融量算术。
+ */
+export function pngUrl(runId: string, pngPath: string): string {
+  const name = pngPath.split('/').pop() ?? ''
+  return `/api/runs/${encodeURIComponent(runId)}/png/${encodeURIComponent(name)}`
+}

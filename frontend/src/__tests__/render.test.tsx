@@ -257,7 +257,26 @@ describe('ADR-032 历史', () => {
     )
     const img = container.querySelector('.archive-detail img') as HTMLImageElement
     expect(img).toBeTruthy()
-    expect(img.getAttribute('src')).toContain(archived.results[0].png_path)
+    // ADR-045:图像走专用端点,**不是** `/out/...` 静态路径。
+    const src = img.getAttribute('src')!
+    expect(src).toBe(
+      `/api/runs/${archived.run_id}/png/buy_and_hold_equity.png`,
+    )
+    expect(src.startsWith('/out/')).toBe(false)
+  })
+
+  it('ADR-045:对比图也走专用端点', () => {
+    const withComp = {
+      ...archived,
+      comparison_png_path: `out/${archived.run_id}/comparison.png`,
+    }
+    const { container } = render(
+      <HistoryList runs={[]} selected={withComp} onSelect={vi.fn()} />,
+    )
+    const srcs = Array.from(container.querySelectorAll('.archive-detail img'))
+      .map((i) => i.getAttribute('src')!)
+    expect(srcs).toContain(`/api/runs/${archived.run_id}/png/comparison.png`)
+    for (const s of srcs) expect(s.startsWith('/out/')).toBe(false)
   })
 
   it('归档详情中【不存在】Recharts 容器 —— 只显示 PNG 快照', () => {

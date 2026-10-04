@@ -157,3 +157,32 @@ def test_frontend_build_output_exists():
     if not api.FRONTEND_DIST.is_dir():
         pytest.skip("frontend/dist 尚不存在(T12 未落地)")
     assert index.is_file(), "frontend/dist/index.html 不存在 —— 构建产物缺失"
+
+
+def test_archived_png_is_actually_served_over_real_http(live_server):
+    """ADR-045 的真实栈门 —— **这是 404 当初逃过所有门的那一层**。
+
+    前端用 mock,`TestClient` 也能过(它直接调 ASGI app),而最初的实现把
+    `png_path` 当成 `/out/...` 静态路径 —— 只有真实服务器上才看得见裂图。
+    """
+    base, _ = live_server
+
+    runs = httpx.get(f"{base}/api/runs", timeout=10).json()
+    if not runs:
+        pytest.skip("out/ 里没有归档 —— 先跑一次回测")
+
+    detail = httpx.get(f"{base}/api/runs/{runs[0]['run_id']}", timeout=10).json()
+    name = Path(detail["results"][0]["png_path"]).name
+
+    r = httpx.get(
+        f"{base}/api/runs/{detail['run_id']}/png/{name}", timeout=10,
+    )
+    assert r.status_code == 200, f"归档图像取不到({r.status_code})—— 真实浏览器里就是裂图"
+    assert r.headers["content-type"] == "image/png"
+    assert r.content[:8] == b"\x89PNG\r\n\x1a\n", "返回的不是 PNG"
+
+    # 反向:`/out/...` 这条路**不应**可用(ADR-045 不挂静态目录)。
+    leaked = httpx.get(f"{base}/{detail['results'][0]['png_path']}", timeout=10)
+    assert leaked.status_code != 200, (
+        "out/ 被当成静态目录服务了 —— 归档成了可枚举的静态资源(违反 ADR-045)"
+    )

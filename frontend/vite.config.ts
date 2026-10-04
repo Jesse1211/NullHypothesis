@@ -8,10 +8,9 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
+      // 归档图像也走 /api(ADR-045 的专用端点),故**只需**代理 /api ——
+      // 与 ADR-033 原文一致。
       '/api': { target: 'http://127.0.0.1:8000', changeOrigin: true },
-      // 归档 PNG 也要走代理:ADR-038 的 png_path 是 `out/...`,
-      // 开发态下 :5173 自己没有这些文件。
-      '/out': { target: 'http://127.0.0.1:8000', changeOrigin: true },
     },
   },
   test: {

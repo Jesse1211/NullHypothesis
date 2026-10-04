@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 import backtest
@@ -313,6 +313,49 @@ def get_run(run_id: str):
     if not path.is_file():
         return _err("NOT_FOUND", f"找不到归档:{run_id}", {"run_id": run_id}, 404)
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+@app.get("/api/runs/{run_id}/png/{name}")
+def get_run_png(run_id: str, name: str):
+    r"""ADR-045:归档 PNG 经**专用端点**服务,`out/` 不挂成静态目录。
+
+    把 `out/` 整个挂出去等于把全部历史归档变成可枚举的静态资源。这里只
+    暴露「这个 run 的这张图」,且两段路径都走**白名单**:
+
+      * `run_id` → `validate_run_id`,与 T11 的详情端点同一套正则
+      * `name`   → **必须出现在该归档 `run.json` 声明的图名集合里**
+
+    `name` 的白名单来自 `run.json` 而不是正则:`<stem>` 由用户提供的策略
+    文件名决定,拿 `{stem}_equity.png` 反推成正则等于把 `.*_equity\.png`
+    放进来 —— 而真正可枚举的事实就在归档里躺着。
+    """
+    if not validate_run_id(run_id):
+        return _err("INVALID_REQUEST", f"run_id 非法:{run_id!r}",
+                    {"run_id": run_id}, 422)
+
+    meta = OUT_DIR / run_id / contracts()["filenames"]["run_json"]
+    if not meta.is_file():
+        return _err("NOT_FOUND", f"找不到归档:{run_id}", {"run_id": run_id}, 404)
+
+    payload = json.loads(meta.read_text(encoding="utf-8"))
+    allowed = {
+        Path(p).name
+        for p in (
+            [r.get("png_path") for r in payload.get("results", [])]
+            + [payload.get("comparison_png_path")]
+        )
+        if p
+    }
+    if name not in allowed:
+        # 不回显 `name` 的内容,只说它不在白名单里。
+        return _err("NOT_FOUND", f"该归档没有这张图:{name}",
+                    {"run_id": run_id, "allowed": sorted(allowed)}, 404)
+
+    png = OUT_DIR / run_id / name
+    if not png.is_file():
+        return _err("NOT_FOUND", f"图像文件缺失:{name}",
+                    {"run_id": run_id, "name": name}, 404)
+    return FileResponse(png, media_type="image/png")
 
 
 # ═══════════════════════ 静态挂载(T9,必须最后)═══════════════════════
