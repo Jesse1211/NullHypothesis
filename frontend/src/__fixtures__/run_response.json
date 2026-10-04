@@ -1,5 +1,5 @@
 {
-  "run_id": "20261004-085725",
+  "run_id": "20261004-115326",
   "results": [
     {
       "strategy": "buy_and_hold",
@@ -10075,6 +10075,7 @@
           "side": "BUY",
           "shares": 3663,
           "price": 27.3,
+          "amount": 99999.90000000001,
           "fee": 0.0,
           "cash_after": 0.09999999999126885,
           "shares_after": 3663
@@ -10092,7 +10093,7 @@
         "max_gap_date": "2018-04-11",
         "mean_abs_gap_pct": 0.32
       },
-      "png_path": "out/20261004-085725/buy_and_hold_equity.png"
+      "png_path": "out/20261004-115326/buy_and_hold_equity.png"
     },
     {
       "strategy": "ma_cross",
@@ -20168,6 +20169,7 @@
           "side": "BUY",
           "shares": 3264,
           "price": 30.63,
+          "amount": 99976.31999999999,
           "fee": 0.0,
           "cash_after": 23.680000000007567,
           "shares_after": 3264
@@ -20177,6 +20179,7 @@
           "side": "SELL",
           "shares": 3264,
           "price": 39.95,
+          "amount": 130396.8,
           "fee": 0.0,
           "cash_after": 130420.48000000001,
           "shares_after": 0
@@ -20186,6 +20189,7 @@
           "side": "BUY",
           "shares": 2750,
           "price": 47.42,
+          "amount": 130405.0,
           "fee": 0.0,
           "cash_after": 15.480000000010477,
           "shares_after": 2750
@@ -20195,6 +20199,7 @@
           "side": "SELL",
           "shares": 2750,
           "price": 41.83,
+          "amount": 115032.5,
           "fee": 0.0,
           "cash_after": 115047.98000000001,
           "shares_after": 0
@@ -20204,6 +20209,7 @@
           "side": "BUY",
           "shares": 4172,
           "price": 27.57,
+          "amount": 115022.04000000001,
           "fee": 0.0,
           "cash_after": 25.94000000000233,
           "shares_after": 4172
@@ -20213,6 +20219,7 @@
           "side": "SELL",
           "shares": 4172,
           "price": 30.85,
+          "amount": 128706.20000000001,
           "fee": 0.0,
           "cash_after": 128732.14000000001,
           "shares_after": 0
@@ -20222,6 +20229,7 @@
           "side": "BUY",
           "shares": 3677,
           "price": 35.01,
+          "amount": 128731.76999999999,
           "fee": 0.0,
           "cash_after": 0.3700000000244472,
           "shares_after": 3677
@@ -20231,6 +20239,7 @@
           "side": "SELL",
           "shares": 3677,
           "price": 32.69,
+          "amount": 120201.12999999999,
           "fee": 0.0,
           "cash_after": 120201.50000000001,
           "shares_after": 0
@@ -20240,6 +20249,7 @@
           "side": "BUY",
           "shares": 3270,
           "price": 36.75,
+          "amount": 120172.5,
           "fee": 0.0,
           "cash_after": 29.000000000014552,
           "shares_after": 3270
@@ -20249,6 +20259,7 @@
           "side": "SELL",
           "shares": 3270,
           "price": 34.2,
+          "amount": 111834.00000000001,
           "fee": 0.0,
           "cash_after": 111863.00000000003,
           "shares_after": 0
@@ -20258,6 +20269,7 @@
           "side": "BUY",
           "shares": 3169,
           "price": 35.29,
+          "amount": 111834.01,
           "fee": 0.0,
           "cash_after": 28.990000000034343,
           "shares_after": 3169
@@ -20267,6 +20279,7 @@
           "side": "SELL",
           "shares": 3169,
           "price": 36.63,
+          "amount": 116080.47,
           "fee": 0.0,
           "cash_after": 116109.46000000004,
           "shares_after": 0
@@ -20276,6 +20289,7 @@
           "side": "BUY",
           "shares": 5331,
           "price": 21.78,
+          "amount": 116109.18000000001,
           "fee": 0.0,
           "cash_after": 0.2800000000279397,
           "shares_after": 5331
@@ -20285,6 +20299,7 @@
           "side": "SELL",
           "shares": 5331,
           "price": 20.69,
+          "amount": 110298.39000000001,
           "fee": 0.0,
           "cash_after": 110298.67000000004,
           "shares_after": 0
@@ -20294,6 +20309,7 @@
           "side": "BUY",
           "shares": 5224,
           "price": 21.11,
+          "amount": 110278.64,
           "fee": 0.0,
           "cash_after": 20.03000000004249,
           "shares_after": 5224
@@ -20303,6 +20319,7 @@
           "side": "SELL",
           "shares": 5224,
           "price": 20.7,
+          "amount": 108136.8,
           "fee": 0.0,
           "cash_after": 108156.83000000005,
           "shares_after": 0
@@ -20312,6 +20329,7 @@
           "side": "BUY",
           "shares": 4852,
           "price": 22.29,
+          "amount": 108151.08,
           "fee": 0.0,
           "cash_after": 5.750000000043656,
           "shares_after": 4852
@@ -20321,6 +20339,7 @@
           "side": "SELL",
           "shares": 4852,
           "price": 21.59,
+          "amount": 104754.68,
           "fee": 0.0,
           "cash_after": 104760.43000000004,
           "shares_after": 0
@@ -20330,6 +20349,7 @@
           "side": "BUY",
           "shares": 4704,
           "price": 22.27,
+          "amount": 104758.08,
           "fee": 0.0,
           "cash_after": 2.3500000000349246,
           "shares_after": 4704
@@ -20339,6 +20359,7 @@
           "side": "SELL",
           "shares": 4704,
           "price": 21.85,
+          "amount": 102782.40000000001,
           "fee": 0.0,
           "cash_after": 102784.75000000004,
           "shares_after": 0
@@ -20348,6 +20369,7 @@
           "side": "BUY",
           "shares": 4420,
           "price": 23.25,
+          "amount": 102765.0,
           "fee": 0.0,
           "cash_after": 19.750000000043656,
           "shares_after": 4420
@@ -20357,6 +20379,7 @@
           "side": "SELL",
           "shares": 4420,
           "price": 23.56,
+          "amount": 104135.2,
           "fee": 0.0,
           "cash_after": 104154.95000000004,
           "shares_after": 0
@@ -20366,6 +20389,7 @@
           "side": "BUY",
           "shares": 4147,
           "price": 25.11,
+          "amount": 104131.17,
           "fee": 0.0,
           "cash_after": 23.78000000004249,
           "shares_after": 4147
@@ -20375,6 +20399,7 @@
           "side": "SELL",
           "shares": 4147,
           "price": 24.02,
+          "amount": 99610.94,
           "fee": 0.0,
           "cash_after": 99634.72000000004,
           "shares_after": 0
@@ -20384,6 +20409,7 @@
           "side": "BUY",
           "shares": 4144,
           "price": 24.04,
+          "amount": 99621.76,
           "fee": 0.0,
           "cash_after": 12.960000000050059,
           "shares_after": 4144
@@ -20393,6 +20419,7 @@
           "side": "SELL",
           "shares": 4144,
           "price": 22.37,
+          "amount": 92701.28,
           "fee": 0.0,
           "cash_after": 92714.24000000005,
           "shares_after": 0
@@ -20402,6 +20429,7 @@
           "side": "BUY",
           "shares": 3726,
           "price": 24.88,
+          "amount": 92702.87999999999,
           "fee": 0.0,
           "cash_after": 11.36000000005879,
           "shares_after": 3726
@@ -20411,6 +20439,7 @@
           "side": "SELL",
           "shares": 3726,
           "price": 23.42,
+          "amount": 87262.92000000001,
           "fee": 0.0,
           "cash_after": 87274.28000000007,
           "shares_after": 0
@@ -20420,6 +20449,7 @@
           "side": "BUY",
           "shares": 4682,
           "price": 18.64,
+          "amount": 87272.48,
           "fee": 0.0,
           "cash_after": 1.80000000007567,
           "shares_after": 4682
@@ -20429,6 +20459,7 @@
           "side": "SELL",
           "shares": 4682,
           "price": 16.8,
+          "amount": 78657.6,
           "fee": 0.0,
           "cash_after": 78659.40000000008,
           "shares_after": 0
@@ -20438,6 +20469,7 @@
           "side": "BUY",
           "shares": 4360,
           "price": 18.04,
+          "amount": 78654.4,
           "fee": 0.0,
           "cash_after": 5.0000000000873115,
           "shares_after": 4360
@@ -20447,6 +20479,7 @@
           "side": "SELL",
           "shares": 4360,
           "price": 16.62,
+          "amount": 72463.2,
           "fee": 0.0,
           "cash_after": 72468.20000000008,
           "shares_after": 0
@@ -20456,6 +20489,7 @@
           "side": "BUY",
           "shares": 4459,
           "price": 16.25,
+          "amount": 72458.75,
           "fee": 0.0,
           "cash_after": 9.450000000084401,
           "shares_after": 4459
@@ -20465,6 +20499,7 @@
           "side": "SELL",
           "shares": 4459,
           "price": 15.42,
+          "amount": 68757.78,
           "fee": 0.0,
           "cash_after": 68767.23000000008,
           "shares_after": 0
@@ -20474,6 +20509,7 @@
           "side": "BUY",
           "shares": 5586,
           "price": 12.31,
+          "amount": 68763.66,
           "fee": 0.0,
           "cash_after": 3.5700000000797445,
           "shares_after": 5586
@@ -20483,6 +20519,7 @@
           "side": "SELL",
           "shares": 5586,
           "price": 11.25,
+          "amount": 62842.5,
           "fee": 0.0,
           "cash_after": 62846.07000000008,
           "shares_after": 0
@@ -20492,6 +20529,7 @@
           "side": "BUY",
           "shares": 4768,
           "price": 13.18,
+          "amount": 62842.24,
           "fee": 0.0,
           "cash_after": 3.8300000000817818,
           "shares_after": 4768
@@ -20501,6 +20539,7 @@
           "side": "SELL",
           "shares": 4768,
           "price": 36.02,
+          "amount": 171743.36000000002,
           "fee": 0.0,
           "cash_after": 171747.1900000001,
           "shares_after": 0
@@ -20510,6 +20549,7 @@
           "side": "BUY",
           "shares": 4501,
           "price": 38.15,
+          "amount": 171713.15,
           "fee": 0.0,
           "cash_after": 34.04000000009546,
           "shares_after": 4501
@@ -20519,6 +20559,7 @@
           "side": "SELL",
           "shares": 4501,
           "price": 41.59,
+          "amount": 187196.59000000003,
           "fee": 0.0,
           "cash_after": 187230.63000000012,
           "shares_after": 0
@@ -20528,6 +20569,7 @@
           "side": "BUY",
           "shares": 4079,
           "price": 45.9,
+          "amount": 187226.1,
           "fee": 0.0,
           "cash_after": 4.530000000115251,
           "shares_after": 4079
@@ -20537,6 +20579,7 @@
           "side": "SELL",
           "shares": 4079,
           "price": 45.18,
+          "amount": 184289.22,
           "fee": 0.0,
           "cash_after": 184293.75000000012,
           "shares_after": 0
@@ -20546,6 +20589,7 @@
           "side": "BUY",
           "shares": 4165,
           "price": 44.24,
+          "amount": 184259.6,
           "fee": 0.0,
           "cash_after": 34.150000000110595,
           "shares_after": 4165
@@ -20555,6 +20599,7 @@
           "side": "SELL",
           "shares": 4165,
           "price": 48.15,
+          "amount": 200544.75,
           "fee": 0.0,
           "cash_after": 200578.9000000001,
           "shares_after": 0
@@ -20564,6 +20609,7 @@
           "side": "BUY",
           "shares": 4484,
           "price": 44.73,
+          "amount": 200569.31999999998,
           "fee": 0.0,
           "cash_after": 9.580000000132713,
           "shares_after": 4484
@@ -20573,6 +20619,7 @@
           "side": "SELL",
           "shares": 4484,
           "price": 54.11,
+          "amount": 242629.24,
           "fee": 0.0,
           "cash_after": 242638.82000000012,
           "shares_after": 0
@@ -20582,6 +20629,7 @@
           "side": "BUY",
           "shares": 4058,
           "price": 59.78,
+          "amount": 242587.24,
           "fee": 0.0,
           "cash_after": 51.58000000013271,
           "shares_after": 4058
@@ -20591,6 +20639,7 @@
           "side": "SELL",
           "shares": 4058,
           "price": 50.05,
+          "amount": 203102.9,
           "fee": 0.0,
           "cash_after": 203154.48000000013,
           "shares_after": 0
@@ -20600,6 +20649,7 @@
           "side": "BUY",
           "shares": 3520,
           "price": 57.7,
+          "amount": 203104.0,
           "fee": 0.0,
           "cash_after": 50.48000000012689,
           "shares_after": 3520
@@ -20617,10 +20667,10 @@
         "max_gap_date": "2018-04-11",
         "mean_abs_gap_pct": 0.32
       },
-      "png_path": "out/20261004-085725/ma_cross_equity.png"
+      "png_path": "out/20261004-115326/ma_cross_equity.png"
     }
   ],
-  "comparison_png_path": "out/20261004-085725/comparison.png",
+  "comparison_png_path": "out/20261004-115326/comparison.png",
   "assumptions": [
     "OHLC 已预先复权(框架不验证)",
     "仅支持市价单。T 日意图在 T+1 开盘无条件执行。"

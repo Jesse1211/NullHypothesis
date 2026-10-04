@@ -46,3 +46,8 @@ export function pngUrl(runId: string, pngPath: string): string {
   const name = pngPath.split('/').pop() ?? ''
   return `/api/runs/${encodeURIComponent(runId)}/png/${encodeURIComponent(name)}`
 }
+
+/** 千分位、无小数 —— 图表轴刻度与图例末值用(ADR-030 的豁免 + 截断)。 */
+export function money0(n: number): string {
+  return Math.round(n).toLocaleString('zh-CN')
+}

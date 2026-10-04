@@ -73,6 +73,7 @@ def _write_trades_csv(result: RunResult, path: Path) -> None:
                 fill.side,
                 fill.shares,          # 恒为正,方向由 side 承载(ADR-037)
                 f"{fill.price:.2f}",
+                f"{fill.amount:.2f}",      # ADR-046
                 f"{fill.fee:.2f}",
                 f"{cash_after:.2f}",
                 shares_after,

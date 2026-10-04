@@ -14,6 +14,9 @@ export interface Trade {
   side: 'BUY' | 'SELL'
   shares: number
   price: number
+  /** `shares × price`,不含手续费。**后端算好的**(ADR-046)——
+   *  ADR-025 规定乘除加减一律在后端,前端不得自己乘。 */
+  amount: number
   fee: number
   cash_after: number
   shares_after: number

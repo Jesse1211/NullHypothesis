@@ -60,7 +60,7 @@ filenames:
   # T8 的「三类输出齐全」= 下面这三个
   t8_required_outputs: ["{stem}_equity.png", "{stem}_trades.csv", "summary.txt"]
 
-trades_csv_header: ["date", "side", "shares", "price", "fee", "cash_after", "shares_after"]
+trades_csv_header: ["date", "side", "shares", "price", "amount", "fee", "cash_after", "shares_after"]
 trade_sides: ["BUY", "SELL"]
 
 # ───────────────────────────── 退出码 ─────────────────────────────

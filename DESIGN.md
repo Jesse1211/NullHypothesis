@@ -545,12 +545,20 @@ T8 的「三类输出齐全」≔ `<stem>_equity.png`、`<stem>_trades.csv`、`s
 **`Fill` 值对象的属性名(构建期不得变更 —— T4 的门读 `fill.shares`/`fill.price`/`fill.fee`/`fills[0].date`/`fills[1].side`)**:
 
 ```python
-Fill: date: str  side: str  shares: int  price: float  fee: float
+Fill: date: str  side: str  shares: int  price: float  fee: float  amount: float = 0.0
 ```
 
-恰好这五个。`cash_after` / `shares_after` **不是** `Fill` 的字段 —— 它们由**聚合根**在产生每个 `Fill` 时同时记录,作为 `RunResult.trades_ledger` 的并行序列(ADR-044)。T7 只是把两者拼成 CSV 行。*(此前写作「由 T7 在写 CSV 时根据账本状态计算」是错的:ADR-044 禁止 T7 import `account`,它没有账本可读)*
+恰好这六个(`amount` 由 **ADR-046** 补入 —— 批准稿的交易清单有「金额」列,
+而 ADR-025 禁止前端算 `shares × price`)。
 
-**`trades.csv` 表头**:见 `contracts.yaml` 的 `trades_csv_header`(七列,顺序固定)。
+**`amount` 在末尾且有默认值,不插在 `fee` 之前。** 前五个字段的名字**与顺序**
+仍然冻结:T3 的门大量使用**位置构造**(`Fill("2020-01-02", BUY, 1, 100.0, 0.1)`),
+插在中间会让第 5 个位置参数从 `fee` 静默变成 `amount` —— 那些门测的是账本对
+恶意输入的反应,错位后仍然「通过」,但测的已不是原来那件事。默认值存在是因为
+`Account` 从不读 `amount`(它自己按 `shares × price` 记账);真实成交一律由
+`resolve_queue` 显式传入。`cash_after` / `shares_after` **不是** `Fill` 的字段 —— 它们由**聚合根**在产生每个 `Fill` 时同时记录,作为 `RunResult.trades_ledger` 的并行序列(ADR-044)。T7 只是把两者拼成 CSV 行。*(此前写作「由 T7 在写 CSV 时根据账本状态计算」是错的:ADR-044 禁止 T7 import `account`,它没有账本可读)*
+
+**`trades.csv` 表头**:见 `contracts.yaml` 的 `trades_csv_header`(**八列**,顺序固定 —— `amount` 由 ADR-046 补入)。
 
 `side ∈ {BUY, SELL}`;`date` 为 `YYYY-MM-DD`;`shares` **恒为正**;`price`/`fee`/`cash_after` 保留 2 位小数;`shares_after` 为整数。
 
@@ -1233,6 +1241,36 @@ GET /api/runs/{run_id}/png/{name}   →  image/png
 
 **`vite.config.ts` 因此只需代理 `/api`**,与 ADR-033 原文一致 —— 归档图走
 `/api/runs/.../png/...`,不再需要额外代理 `/out`。
+
+### ADR-046 · 界面布局以已批准的 HTML 预览为准;`Fill.amount` 与 `TradeList.tsx` 补入契约
+
+**背景(一次真实的返工)**:ADR-037b 只规定了**文件名与数据流向**(谁持状态、
+谁不许 `fetch`),它**从未规定布局**。界面设计在一份人工批准过的 HTML 预览
+里:`NullHypothesis Backtest Console`(artifact `8QUBMStfEymniHPnkUFYiP`)。
+T12–T14 第一版把 ADR-037b 的组件清单当成了界面设计,产出单栏堆叠界面 ——
+与批准稿无关,而 63 条前端门**全绿**:它们只断言数据正确性(I8/I9/ADR-018),
+**没有一条断言布局**。
+
+**决策三条**:
+
+1. **界面布局以该 HTML 预览为唯一真相来源**,以下结构为契约:三栏骨架
+   (左 `rail` 表单 / 中 `main` 结果 / 右 `histo` 历史)、顶栏(品牌 + 版本 +
+   主题切换)、回执式等宽汇总、**独立的「已知局限」警示区块**(紧跟曲线,
+   非脚注)、交易清单表、亮/暗双主题。
+2. **`Fill` 增加 `amount` 字段**(`= shares * price`)。批准稿的交易清单有
+   「金额」列,而 ADR-025 规定「乘、除、加、减一律在后端」—— 前端算
+   `shares × price` 会在 I8 上开口子。故由后端提供。
+   **这修订 ADR-037 的「`Fill` 恰好这五个属性」与 `trades_csv_header`。**
+3. **新增 `components/TradeList.tsx`**(T13 归属)。它在批准稿里存在,
+   但漏在 ADR-037b 的清单里。
+
+**「已知局限」区块为何是契约而非装饰**:批准稿给它的标题是「由设计决定,
+非遗漏」,位置紧跟曲线 —— 目的是让人看曲线时**无法忽略**它。第一版把它
+降级成汇总底部两行小字,正好废掉了它的作用。它是 ADR-001(不可验证的复权
+前提)与 ADR-002(T+1 无条件成交)在界面上的唯一守卫,与 ADR-021 同理。
+
+**布局门**:ADR-037b 的布局门因此扩充为断言上述结构存在 —— 否则本 ADR
+与第一版同病:无门可依,下次照样漂。
 
 ### ADR-037b · 前端文件布局与组件契约(构建期不得变更)
 

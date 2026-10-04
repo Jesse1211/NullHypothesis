@@ -1,4 +1,6 @@
-/** T12 · 运行表单。只接 props,不自己取数。 */
+/** T12 · 左栏表单(`rail`)。只接 props,不自己取数。 */
+
+import { SERIES_VARS } from './EquityChart'
 
 export interface RunFormProps {
   strategies: string[]
@@ -29,12 +31,12 @@ export function canRun(p: {
 }): boolean {
   if (p.selectedStrategies.length < 1) return false
   if (p.dataFile === null) return false
+  if (p.cash.trim() === '') return false
   const cash = Number(p.cash)
-  if (!Number.isFinite(cash) || cash <= 0 || p.cash.trim() === '') return false
+  if (!Number.isFinite(cash) || cash <= 0) return false
+  if (p.fee.trim() === '') return false
   const fee = Number(p.fee)
-  if (!Number.isFinite(fee) || fee < 0 || fee >= 0.1 || p.fee.trim() === '') {
-    return false
-  }
+  if (!Number.isFinite(fee) || fee < 0 || fee >= 0.1) return false
   return true
 }
 
@@ -42,89 +44,120 @@ export function canRun(p: {
 // 恒加和恒不加都违反它,故 T12 的门用 21 项与 20 项双向断言。
 export const FILTER_THRESHOLD = 20
 
+function cssVar(name: string): string {
+  if (typeof getComputedStyle !== 'function') return '#2C7BCE'
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#2C7BCE'
+}
+
 export default function RunForm(props: RunFormProps) {
   const {
     strategies, dataFiles, selectedStrategies, dataFile, cash, fee,
     running, onToggleStrategy, onDataFile, onCash, onFee, onRun,
   } = props
 
-  const enabled = canRun(props) && !running
+  const ok = canRun(props)
+  const enabled = ok && !running
 
   return (
-    <section className="run-form">
-      <h2>跑一次回测</h2>
+    <aside className="rail">
+      <div className="fgroup">
+        <fieldset>
+          <legend className="lbl">策略 · strategies/</legend>
+          {strategies.length === 0 ? (
+            <p className="hint">strategies/ 目录为空 —— 放一个 .py 进去再刷新。</p>
+          ) : (
+            <div className="picklist">
+              {strategies.map((s) => {
+                const idx = selectedStrategies.indexOf(s)
+                const on = idx >= 0
+                // 色块与曲线同色 —— 第二条用 series-2,与预览稿一致
+                const cls = `pick${on ? ' on' : ''}${on && idx === 1 ? ' s2' : ''}`
+                return (
+                  <label className={cls} key={s} data-k={s}>
+                    <span
+                      className="swatch"
+                      style={on ? { background: cssVar(SERIES_VARS[idx % SERIES_VARS.length]) } : undefined}
+                    />
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() => onToggleStrategy(s)}
+                    />
+                    <span className="nm">{s}</span>
+                  </label>
+                )
+              })}
+            </div>
+          )}
+          <p className="hint">
+            多选 2+ 条即叠加对比(ADR-029)。策略只能按文件名引用 ——
+            界面不提供在线编辑(ADR-026)。
+          </p>
+        </fieldset>
+      </div>
 
-      <fieldset>
-        <legend>策略(可多选,对应 CLI 的 --strategy 可重复)</legend>
-        {strategies.length === 0 ? (
-          <p className="empty">strategies/ 目录为空 —— 放一个 .py 进去再刷新。</p>
-        ) : (
-          <ul className="picker">
-            {strategies.map((s) => (
-              <li key={s}>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={selectedStrategies.includes(s)}
-                    onChange={() => onToggleStrategy(s)}
-                  />
-                  {s}
-                </label>
-              </li>
-            ))}
-          </ul>
-        )}
-      </fieldset>
-
-      <fieldset>
-        <legend>数据(只能从服务器 data/ 目录选,ADR-027)</legend>
+      <div className="fgroup">
+        <label className="lbl" htmlFor="data-file">数据 · data/</label>
         {dataFiles.length === 0 ? (
-          <p className="empty">data/ 目录为空 —— 放一个 .csv 进去再刷新。</p>
+          <p className="hint">data/ 目录为空 —— 放一个 .csv 进去再刷新。</p>
         ) : (
           <>
             {dataFiles.length > FILTER_THRESHOLD && (
               <input
-                id="data-filter"
-                type="search"
-                placeholder="过滤数据文件…"
-                aria-label="过滤数据文件"
+                id="data-filter" className="filter" type="search"
+                placeholder="过滤数据文件…" aria-label="过滤数据文件"
               />
             )}
-          <select
-            id="data-file"
-            value={dataFile ?? ''}
-            onChange={(e) => onDataFile(e.target.value)}
-            aria-label="数据文件"
-          >
-            <option value="" disabled>请选择…</option>
-            {dataFiles.map((d) => (
-              <option key={d} value={d}>{d}</option>
-            ))}
-          </select>
+            <div className="selwrap">
+              <select
+                className="sel" id="data-file" value={dataFile ?? ''}
+                onChange={(e) => onDataFile(e.target.value)}
+                aria-label="数据文件"
+              >
+                <option value="" disabled>请选择…</option>
+                {dataFiles.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
           </>
         )}
-      </fieldset>
+      </div>
 
-      <fieldset className="numbers">
-        <label htmlFor="cash">
-          初始资金
-          <input
-            id="cash" type="number" value={cash} min="0.01" step="1000"
-            onChange={(e) => onCash(e.target.value)}
-          />
-        </label>
-        <label htmlFor="fee">
-          费率(0 ≤ fee &lt; 0.1)
-          <input
-            id="fee" type="number" value={fee} min="0" max="0.0999" step="0.0001"
-            onChange={(e) => onFee(e.target.value)}
-          />
-        </label>
-      </fieldset>
+      <div className="fgroup two">
+        <div>
+          <label className="lbl" htmlFor="cash">初始资金</label>
+          <div className="field">
+            <input
+              id="cash" value={cash} inputMode="numeric"
+              onChange={(e) => onCash(e.target.value)}
+            />
+            <span className="unit">USD</span>
+          </div>
+        </div>
+        <div>
+          <label className="lbl" htmlFor="fee">手续费率</label>
+          <div className="field">
+            <input
+              id="fee" value={fee} inputMode="decimal"
+              onChange={(e) => onFee(e.target.value)}
+            />
+            <span className="unit">×额</span>
+          </div>
+        </div>
+      </div>
 
-      <button id="run-button" onClick={onRun} disabled={!enabled}>
-        {running ? '跑着呢…' : '跑'}
+      <button
+        className={`runbtn${running ? ' busy' : ''}`} id="run-button"
+        type="button" onClick={onRun} disabled={!enabled}
+      >
+        {running ? <><span className="spin" />计算中…</> : '跑'}
       </button>
-    </section>
+      <p className="hint" id="run-hint">
+        {selectedStrategies.length === 0
+          ? '至少选一条策略才能跑。'
+          : !ok
+            ? '资金须 > 0,费率须在 [0, 0.1) 内。'
+            : '同步请求,运行期间按钮禁用(ADR-028)。'}
+      </p>
+    </aside>
   )
 }

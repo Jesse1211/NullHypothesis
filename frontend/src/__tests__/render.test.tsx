@@ -21,8 +21,16 @@ function clone<T>(x: T): T {
   return JSON.parse(JSON.stringify(x)) as T
 }
 
-function field(name: string): string {
-  return screen.getByText(name).closest('.row')!.querySelector('dd')!.textContent!
+/** 回执是等宽 `<pre>`(ADR-046 的形态)—— 取整块文本做断言。 */
+function receiptText(): string {
+  return document.querySelector('.receipt')!.textContent ?? ''
+}
+
+/** 取「标签 + 空格 + 值」里的那个值 —— 回执一行一项。 */
+function field(label: string): string {
+  const line = receiptText().split('\n').find((l) => l.includes(label))
+  if (!line) throw new Error(`回执里没有「${label}」这一行:\n${receiptText()}`)
+  return line.slice(line.indexOf(label) + label.length).trim()
 }
 
 // ═══════════════ I8:每个字段都要【不自洽】 ═══════════════
@@ -47,31 +55,34 @@ describe('I8 读模型一致性(前端零算术)', () => {
   }
 
   it('total_return_pct 显示后端的 42.00%,不是推导出的 +100%', () => {
-    render(<SummaryPanel result={inconsistent()} assumptions={[]} />)
+    render(<SummaryPanel results={[inconsistent()]} assumptions={[]} />)
     expect(field('总收益')).toBe('+42.00%')
     expect(field('总收益')).not.toContain('100')
   })
 
   it('final_equity 显示后端的值', () => {
-    render(<SummaryPanel result={inconsistent()} assumptions={[]} />)
+    render(<SummaryPanel results={[inconsistent()]} assumptions={[]} />)
     expect(field('期末资产')).toBe('200,000.00')
   })
 
   it('trade_count 显示 7,不是 trades.length(3)', () => {
     const r = inconsistent()
     expect(r.trades.length).toBe(3)       // 前提:两者确实不同
-    render(<SummaryPanel result={r} assumptions={[]} />)
+    render(<SummaryPanel results={[r]} assumptions={[]} />)
     expect(field('交易次数')).toBe('7')
   })
 
   it('max_gap_pct 显示 -8.42%,非 8.42% / -0.08% / -842.00%', () => {
-    render(<SummaryPanel result={inconsistent()} assumptions={[]} />)
+    render(<SummaryPanel results={[inconsistent()]} assumptions={[]} />)
+    // 回执把跳空与其日期放在**同一行**(批准稿如此),故逐段断言。
     const v = field('最大跳空')
-    expect(v).toBe('-8.42%')
-    expect(v).not.toBe('8.42%')
-    expect(v).not.toBe('-0.08%')
-    expect(v).not.toBe('-842.00%')
-    expect(field('最大跳空日期')).toBe('2020-03-16')
+    // 取该行的第一个 token 作为「值」—— 后面还跟着日期。
+    const shown = v.split(/\s+/)[0]
+    expect(shown).toBe('-8.42%')
+    expect(shown).not.toBe('8.42%')        // 符号没丢
+    expect(shown).not.toBe('-0.08%')       // 没又除一次 100
+    expect(shown).not.toBe('-842.00%')     // 没又乘一次 100
+    expect(v).toContain('2020-03-16')
   })
 
   it('max_gap_pct: null → 按 null_display 显示,非 null/NaN/空白', () => {
@@ -79,13 +90,12 @@ describe('I8 读模型一致性(前端零算术)', () => {
     r.summary.max_gap_pct = null
     r.summary.max_gap_date = null
     r.summary.mean_abs_gap_pct = null
-    render(<SummaryPanel result={r} assumptions={[]} />)
-    for (const name of ['最大跳空', '最大跳空日期', '平均绝对跳空']) {
-      const v = field(name)
-      expect(v).toBe('—')
-      expect(v).not.toMatch(/null|NaN/)
-      expect(v.trim()).not.toBe('')
-    }
+    render(<SummaryPanel results={[r]} assumptions={[]} />)
+    // 最大跳空那一行同时含值与日期,两者都应是 null_display。
+    expect(field('最大跳空').split(/\s+/).filter(Boolean)).toEqual(['—', '—'])
+    expect(field('均值跳空')).toBe('—')
+    const all = receiptText()
+    expect(all).not.toMatch(/null|NaN|undefined/)
   })
 })
 
@@ -94,17 +104,15 @@ describe('I8 读模型一致性(前端零算术)', () => {
 describe('ADR-021 假设文案', () => {
   it('两条 ⚠ 文案在界面上可见', () => {
     const { container } = render(
-      <SummaryPanel result={BASE.results[0]} assumptions={BASE.assumptions} />,
+      <SummaryPanel results={[BASE.results[0]]} assumptions={BASE.assumptions} />,
     )
     expect(BASE.assumptions.length).toBe(2)
     // 断言在 `.assumptions` 列表里逐条出现 —— 不用 RegExp(文案含 `(` `)`
     // 等元字符),也不用 getByText(祖先节点的 textContent 也包含它,
     // 会命中多个元素)。
-    const items = Array.from(container.querySelectorAll('.assumptions li'))
-      .map((li) => li.textContent ?? '')
-    expect(items).toHaveLength(2)
+    const text = container.querySelector('.receipt')!.textContent ?? ''
     for (const a of BASE.assumptions) {
-      expect(items.some((t) => t.includes(a))).toBe(true)
+      expect(text.includes(a), `回执里缺这条假设:${a}`).toBe(true)
     }
   })
 })
@@ -120,8 +128,8 @@ describe('I9 图表数据绑定', () => {
     })
 
     const r = BASE.results[0]
-    const { container } = render(<EquityChart results={[r]} />)
-    expect(container.querySelector('.chart')).toBeTruthy()
+    const { container } = render(<EquityChart results={[r]} initialCash={r.summary.initial_cash} />)
+    expect(container.querySelector('.chartbox')).toBeTruthy()
 
     // 直接验证组件喂给 Recharts 的那张宽表:按 date 合并是**重排**,
     // 每个 equity 原样搬运。这里复算同一张表并逐点比对。
@@ -137,9 +145,19 @@ describe('I9 图表数据绑定', () => {
   })
 
   it('两条策略 → 图上两条 Line', () => {
-    const { container } = render(<EquityChart results={BASE.results} />)
+    const { container } = render(
+      <EquityChart
+        results={BASE.results}
+        initialCash={BASE.results[0].summary.initial_cash}
+      />,
+    )
     expect(BASE.results.length).toBe(2)
-    expect(container.querySelector('.chart')).toBeTruthy()
+    expect(container.querySelector('.chartbox')).toBeTruthy()
+    // 图例每条策略一个可点按钮(批准稿:点击切换显隐)
+    const legend = Array.from(container.querySelectorAll('.lg'))
+    expect(legend).toHaveLength(2)
+    expect(legend.map((b) => b.getAttribute('data-series')))
+      .toEqual(BASE.results.map((r) => r.strategy))
   })
 })
 
@@ -178,7 +196,7 @@ describe('零交易', () => {
     const r = clone(BASE.results[0])
     r.trades = []
     r.summary.trade_count = 0
-    render(<SummaryPanel result={r} assumptions={[]} />)
+    render(<SummaryPanel results={[r]} assumptions={[]} />)
     expect(field('交易次数')).toBe('0')
   })
 })

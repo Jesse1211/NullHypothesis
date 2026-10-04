@@ -201,7 +201,7 @@ def _run_payload(report, png_paths: dict[str, Any]) -> dict[str, Any]:
                 "trades": [
                     {
                         "date": f.date, "side": f.side, "shares": f.shares,
-                        "price": f.price, "fee": f.fee,
+                        "price": f.price, "amount": f.amount, "fee": f.fee,
                         "cash_after": ca, "shares_after": sa,
                     }
                     for f, (ca, sa) in zip(r.trades, r.trades_ledger)

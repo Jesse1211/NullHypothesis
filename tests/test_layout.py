@@ -66,7 +66,10 @@ VALUE_OBJECTS = [
      {"strategy", "equity", "trades", "trades_ledger", "summary"}),
     ("nullhypothesis.run", "RunReport",
      {"run_id", "request", "results", "assumptions"}),
-    ("nullhypothesis.engine", "Fill", {"date", "side", "shares", "price", "fee"}),
+    # `amount` 由 ADR-046 补入(批准稿的交易清单有「金额」列,而 ADR-025
+    # 禁止前端算 shares × price)。
+    ("nullhypothesis.engine", "Fill",
+     {"date", "side", "shares", "price", "fee", "amount"}),
 ]
 
 

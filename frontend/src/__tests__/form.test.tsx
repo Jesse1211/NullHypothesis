@@ -55,7 +55,8 @@ function renderForm(over: Partial<React.ComponentProps<typeof RunForm>> = {}) {
     ...over,
   }
   render(<RunForm {...props} />)
-  return screen.getByRole('button', { name: /跑/ }) as HTMLButtonElement
+  // 按 id 取 —— 运行中按钮文案变成「计算中…」,按名字找会失败
+  return document.getElementById('run-button') as HTMLButtonElement
 }
 
 describe('ADR-028:运行中按钮禁用', () => {

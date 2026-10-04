@@ -17,5 +17,9 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/setupTests.ts'],
+    // ADR-046 的布局门要读 styles.css 的**文本**(断言三栏 grid、双主题
+    // token 等)。vitest 默认 `css: false` 把 CSS stub 成空串,连
+    // `?raw` / `import.meta.glob` 都拿不到内容 —— 实测 length 0。
+    css: true,
   },
 })

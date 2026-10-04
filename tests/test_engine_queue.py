@@ -1613,15 +1613,25 @@ def test_adr014a_does_not_fire_at_zero_fee_rate():
 # ═════════════════════════ 值对象与杂项 ═════════════════════════
 
 
-def test_fill_has_exactly_the_five_adr037_fields():
-    """ADR-037:`Fill` **恰好**五个字段 —— `cash_after`/`shares_after` 不在内。"""
+def test_fill_has_exactly_the_six_adr037_fields():
+    """ADR-037(经 ADR-046 修订):`Fill` **恰好**六个字段。
+
+    `cash_after`/`shares_after` 仍**不在内** —— 它们是 `trades_ledger` 的
+    并行序列(ADR-044)。`amount` 在**末尾**:前五个的名字与顺序仍然冻结,
+    因为 T3 的门大量使用位置构造,插在中间会让第 5 个位置参数静默错位。
+    """
     assert [f for f in Fill.__dataclass_fields__] == [
         "date",
         "side",
         "shares",
         "price",
         "fee",
+        "amount",
     ]
+    # 位置构造必须仍然把第 5 个参数解释为 `fee`(ADR-046 的排序理由)。
+    pos = Fill("2020-01-02", "BUY", 1, 2.0, 0.5)
+    assert pos.fee == 0.5 and pos.amount == 0.0
+
     f = Fill(date="2020-01-02", side="BUY", shares=1, price=2.0, fee=0.0)
     assert not hasattr(f, "cash_after")
     assert not hasattr(f, "shares_after")

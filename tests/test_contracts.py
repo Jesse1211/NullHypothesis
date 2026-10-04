@@ -295,10 +295,23 @@ def test_design_md_worked_example_is_recomputable():
 
 
 def test_trades_csv_header_matches_fill_fields_plus_ledger(c):
-    """Fill 恰好五个字段;cash_after/shares_after 来自 trades_ledger,不是 Fill 的字段。"""
+    """表头 = Fill 的展示列 + trades_ledger 的两列。
+
+    `amount` 由 ADR-046 补入,在 CSV 里排在 `price` 之后、`fee` 之前
+    (批准稿交易清单的列序:… 价格 / 金额 / 手续费 …)—— 这与 `Fill`
+    dataclass 里 `amount` 排最后**不矛盾**:后者的顺序受位置构造约束
+    (见 ADR-046),前者是人读的列序。
+    """
     header = c["trades_csv_header"]
-    assert header[:5] == ["date", "side", "shares", "price", "fee"]
-    assert header[5:] == ["cash_after", "shares_after"]
+    assert header == [
+        "date", "side", "shares", "price", "amount", "fee",
+        "cash_after", "shares_after",
+    ]
+    # cash_after/shares_after 不是 Fill 的字段(ADR-044)
+    from nullhypothesis.engine import Fill
+
+    assert "cash_after" not in Fill.__dataclass_fields__
+    assert "shares_after" not in Fill.__dataclass_fields__
 
 
 def test_adr014a_affordability_constraint(c):

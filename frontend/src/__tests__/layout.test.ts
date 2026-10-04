@@ -14,10 +14,22 @@ import { describe, expect, it } from 'vitest'
 import pkg from '../../package.json'
 import viteConfig from '../../vite.config.ts?raw'
 
+
 // eager + query:'?raw' → { '/src/App.tsx': '<源码字符串>', ... }
 const SOURCES = import.meta.glob('../**/*.{ts,tsx}', {
   eager: true, query: '?raw', import: 'default',
 }) as Record<string, string>
+
+/** CSS 与 HTML 另外 glob:`import ... from '*.css?raw'` 在 vitest 下返回
+ *  **空串**(默认 `css: false`,CSS 被 stub 掉),而 glob 走的是同一个
+ *  `?raw` 转换但不经 CSS 插件 —— 实测前者 length 0,后者正常。 */
+const ASSETS = {
+  ...import.meta.glob('../styles.css', { eager: true, query: '?raw', import: 'default' }),
+  ...import.meta.glob('../../index.html', { eager: true, query: '?raw', import: 'default' }),
+} as Record<string, string>
+
+const cssSource = ASSETS['../styles.css'] ?? ''
+const indexHtml = ASSETS['../../index.html'] ?? ''
 
 /** glob 的键是相对本文件的路径(`../App.tsx`),归一成 `App.tsx` 形式。 */
 function source(rel: string): string | undefined {
@@ -33,15 +45,20 @@ const PINNED_FILES = [
   'components/ComparisonTable.tsx',
   'components/HistoryList.tsx',
   'components/ErrorCard.tsx',
+  // ADR-046 补入
+  'components/TradeList.tsx',
+  'components/LimitationsPanel.tsx',
 ]
 
-// T13/T14 的五个组件:只接 props,不自己取数。
+// T13/T14 的组件:只接 props,不自己取数。
 const PROPS_ONLY = [
   'components/EquityChart.tsx',
   'components/SummaryPanel.tsx',
   'components/ComparisonTable.tsx',
   'components/HistoryList.tsx',
   'components/ErrorCard.tsx',
+  'components/TradeList.tsx',
+  'components/LimitationsPanel.tsx',
 ]
 
 describe('ADR-037b 布局契约', () => {
@@ -75,5 +92,101 @@ describe('ADR-037b 布局契约', () => {
   it('vite.config.ts 把 /api 代理到 127.0.0.1:8000', () => {
     expect(viteConfig).toContain('http://127.0.0.1:8000')
     expect(viteConfig).toContain("'/api'")
+  })
+})
+
+// ═══════════════ ADR-046 · 界面布局契约 ═══════════════
+//
+// **这一组门的缺失就是那次返工的原因。** T12–T14 第一版把 ADR-037b 的
+// 组件清单当成了界面设计,产出单栏堆叠界面 —— 而 63 条前端门全绿,因为
+// 它们只断言数据正确性,没有一条断言布局。
+
+describe('ADR-046 布局契约(批准稿 8QUBMStfEymniHPnkUFYiP)', () => {
+  const app = source('App.tsx')!
+  const css = cssSource
+
+  it('三栏骨架:rail / main / histo', () => {
+    for (const cls of ['rail', 'main', 'histo']) {
+      expect(css, `styles.css 缺 .${cls}`).toContain(`.${cls}`)
+    }
+    // 三栏 grid,不是单栏堆叠
+    expect(css).toMatch(/grid-template-columns:\s*268px\s+minmax\(0,\s*1fr\)\s+232px/)
+    expect(app).toContain('className="shell"')
+  })
+
+  it('顶栏:品牌 + 版本 + 主题切换', () => {
+    expect(app).toContain('className="topbar"')
+    expect(app).toContain('className="brand"')
+    expect(app).toContain('id="theme-toggle"')
+  })
+
+  it('亮/暗双主题:三种状态都定义了 token', () => {
+    // 未标记(系统) / 显式 light 不被系统 dark 覆盖 / 显式 dark
+    expect(css).toContain('@media (prefers-color-scheme: dark)')
+    expect(css).toContain(':root:not([data-theme="light"])')
+    expect(css).toContain(':root[data-theme="dark"]')
+    // body 必须有显式背景,否则会借宿主的底色
+    expect(css).toMatch(/body\s*\{[^}]*background:\s*var\(--ground\)/)
+  })
+
+  it('回执式汇总是等宽 pre,不是 dl', () => {
+    const sp = source('components/SummaryPanel.tsx')!
+    expect(sp).toContain('className="receipt"')
+    expect(sp).toContain('<pre')
+    // 排除注释行再找 —— 本文件的 docstring 里就有一句「为什么是 `<pre>`
+    // 而不是 `<dl>`」,按裸子串匹配会命中它(与 ADR-036 的 re.compile
+    // 误报同类)。
+    const code = sp.split('\n')
+      .filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l))
+      .join('\n')
+    expect(/<dl[\s>]/.test(code), '汇总退回成了 dl —— 批准稿是回执形态').toBe(false)
+    expect(css).toMatch(/\.receipt\s*\{[^}]*font-family:\s*var\(--mono\)/)
+  })
+
+  it('「已知局限」是独立区块且紧跟曲线,不是脚注', () => {
+    const lp = source('components/LimitationsPanel.tsx')!
+    expect(lp).toContain('className="limits"')
+    expect(lp).toContain('由设计决定,非遗漏')
+    // 它必须在 App 里【紧跟】EquityChart —— 位置本身是契约
+    const chartAt = app.indexOf('<EquityChart')
+    const limitsAt = app.indexOf('<LimitationsPanel')
+    const summaryAt = app.indexOf('<SummaryPanel')
+    expect(chartAt).toBeGreaterThan(-1)
+    expect(limitsAt).toBeGreaterThan(chartAt)
+    expect(limitsAt).toBeLessThan(summaryAt)
+  })
+
+  it('交易清单七列,列序与批准稿一致', async () => {
+    const mod = await import('../components/TradeList')
+    expect(mod.TRADE_COLUMNS).toEqual([
+      '日期', '动作', '股数', '价格', '金额', '成交后现金', '成交后持股',
+    ])
+  })
+
+  it('金额列读 trade.amount,不自己算 shares × price(ADR-025/046)', () => {
+    const tl = source('components/TradeList.tsx')!
+    expect(tl).toContain('x.amount')
+    // 任何 shares 与 price 相乘的形态都不许出现
+    expect(tl).not.toMatch(/shares\s*\*\s*price|price\s*\*\s*shares/)
+  })
+
+  it('对比表含最大跳空列(批准稿五列)', () => {
+    const ct = source('components/ComparisonTable.tsx')!
+    for (const h of ['策略', '期末资产', '总收益', '交易次数', '最大跳空']) {
+      expect(ct, `对比表缺「${h}」列`).toContain(h)
+    }
+  })
+
+  it('图表图例可点击切换显隐(批准稿的交互)', () => {
+    const ec = source('components/EquityChart.tsx')!
+    expect(ec).toContain('className={`lg')
+    expect(ec).toContain('onClick')
+    expect(ec).toContain('data-series')
+  })
+
+  it('index.html 引入 Inter Tight 与 JetBrains Mono', () => {
+    expect(indexHtml).toContain('Inter+Tight')
+    expect(indexHtml).toContain('JetBrains+Mono')
+    expect(indexHtml).toContain('fonts.googleapis.com')
   })
 })

@@ -165,7 +165,7 @@ Order = TargetOrder | ShareOrder
 
 @dataclass(frozen=True)
 class Fill:
-    """成交(ADR-037 钉死五个字段,构建期不得变更)。
+    """成交(ADR-037 钉死字段,构建期不得变更;`amount` 由 ADR-046 补入)。
 
     T4 的门读 `fill.shares` / `fill.price` / `fill.fee` / `fills[0].date` /
     `fills[1].side`,故字段名与顺序都不可改。
@@ -174,6 +174,9 @@ class Fill:
     * `side` —— `BUY` / `SELL`(`contracts.yaml` 的 `trade_sides`)
     * `shares` —— **恒为正**,方向由 `side` 承载(ADR-037)
     * `price` —— 成交日的 `Open`(I7)
+    * `amount` —— `shares * price`,**不含手续费**(ADR-046)。由后端提供是
+      因为 ADR-025 规定「乘、除、加、减一律在后端」,而批准稿的交易清单有
+      「金额」列 —— 前端算 `shares × price` 会在 I8 上开口子
     * `fee` —— `shares * price * rate`(ADR-007/043)
 
     `cash_after` / `shares_after` 不在此处:ADR-037 明文「不是 `Fill` 的字段」,
@@ -185,6 +188,16 @@ class Fill:
     shares: int
     price: float
     fee: float
+    # ADR-046 的新字段放在**末尾**且有默认值,不插在 `fee` 之前 ——
+    # ADR-037 钉死了前五个字段的名字**与顺序**,而 T3 的门大量使用位置构造
+    # (`Fill("2020-01-02", BUY, 1, 100.0, 0.1)`)。插在中间会让第 5 个位置
+    # 参数从 `fee` 静默变成 `amount`:那些门测的是账本对**恶意输入**的反应,
+    # 错位后它们仍然「通过」,但测的已经不是原来那件事了。
+    #
+    # 默认值取 0.0 而非必填,是因为 `Account` 从不读 `amount`(它自己按
+    # shares × price 记账),故调用方构造的影子 Fill 无须提供它。真实成交
+    # 一律由 `resolve_queue` 显式传入。
+    amount: float = 0.0
 
 
 # ═════════════════════════ bar 的结构化类型 ═════════════════════════
@@ -510,7 +523,8 @@ class Backtest:
         # 费率乘在**绝对**股数上,故卖出同样收费(ADR-043 的「双向均收取」)。
         fill_shares = abs(delta)
         side = BUY if delta > 0 else SELL
-        fee = fill_shares * open_price * self.fee_rate
+        amount = fill_shares * open_price
+        fee = amount * self.fee_rate
 
         fill = Fill(
             date=bar_date_str(bar.Date),
@@ -518,6 +532,8 @@ class Backtest:
             shares=fill_shares,
             # I7:成交价 == 成交日的 Open。本方法只有这一个价格来源。
             price=open_price,
+            # ADR-046:成交额,**不含手续费**。前端直接显示,不做乘法。
+            amount=amount,
             fee=fee,
         )
 
