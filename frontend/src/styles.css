@@ -1,0 +1,82 @@
+:root {
+  --fg: #1a1a1a;
+  --muted: #666;
+  --line: #e2e2e2;
+  --bg: #fcfcfc;
+  --accent: #2563eb;
+  font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+body { margin: 0; }
+
+.app {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+}
+
+h1 { margin-bottom: 4px; }
+.tagline { color: var(--muted); margin-top: 0; }
+
+fieldset {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  margin: 0 0 12px;
+}
+
+.picker { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 12px; }
+.numbers { display: flex; gap: 24px; flex-wrap: wrap; }
+.numbers label { display: flex; flex-direction: column; gap: 4px; }
+
+button#run-button {
+  padding: 8px 24px;
+  font-size: 16px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+button#run-button:disabled { background: #aaa; cursor: not-allowed; }
+
+.empty { color: var(--muted); font-style: italic; }
+
+.summary dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; }
+.summary .row { display: contents; }
+.summary dt { color: var(--muted); }
+.summary dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+.assumptions { color: #a16207; font-size: 14px; padding-left: 20px; }
+
+table.comparison { border-collapse: collapse; width: 100%; margin: 16px 0; }
+table.comparison th, table.comparison td {
+  border: 1px solid var(--line);
+  padding: 6px 12px;
+  text-align: left;
+}
+table.comparison td { font-variant-numeric: tabular-nums; }
+
+.error-card {
+  border: 1px solid #dc2626;
+  border-left-width: 4px;
+  border-radius: 6px;
+  padding: 12px 16px;
+  background: #fef2f2;
+}
+.error-card .traceback {
+  background: #1a1a1a; color: #f4f4f4; padding: 12px;
+  overflow-x: auto; font-size: 12px; border-radius: 4px;
+}
+
+.run-list { list-style: none; padding: 0; }
+.run-list button {
+  display: flex; gap: 16px; width: 100%; text-align: left;
+  padding: 8px; border: 1px solid var(--line); background: white;
+  border-radius: 4px; margin-bottom: 4px; cursor: pointer;
+}
+.run-list .run-id { font-variant-numeric: tabular-nums; }
+.run-list .equity { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+.archive-detail img { max-width: 100%; border: 1px solid var(--line); }
