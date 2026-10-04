@@ -143,17 +143,10 @@ describe('ADR-046 布局契约(批准稿 8QUBMStfEymniHPnkUFYiP)', () => {
     expect(css).toMatch(/\.receipt\s*\{[^}]*font-family:\s*var\(--mono\)/)
   })
 
-  it('「已知局限」是独立区块且紧跟曲线,不是脚注', () => {
+  it('「已知局限」是独立区块,不是脚注', () => {
     const lp = source('components/LimitationsPanel.tsx')!
     expect(lp).toContain('className="limits"')
     expect(lp).toContain('由设计决定,非遗漏')
-    // 它必须在 App 里【紧跟】EquityChart —— 位置本身是契约
-    const chartAt = app.indexOf('<EquityChart')
-    const limitsAt = app.indexOf('<LimitationsPanel')
-    const summaryAt = app.indexOf('<SummaryPanel')
-    expect(chartAt).toBeGreaterThan(-1)
-    expect(limitsAt).toBeGreaterThan(chartAt)
-    expect(limitsAt).toBeLessThan(summaryAt)
   })
 
   it('交易清单七列,列序与批准稿一致', async () => {
@@ -188,5 +181,72 @@ describe('ADR-046 布局契约(批准稿 8QUBMStfEymniHPnkUFYiP)', () => {
     expect(indexHtml).toContain('Inter+Tight')
     expect(indexHtml).toContain('JetBrains+Mono')
     expect(indexHtml).toContain('fonts.googleapis.com')
+  })
+})
+
+// ═══════════════ ADR-047 · 主栏阅读顺序 ═══════════════
+
+describe('ADR-047 主栏顺序:结论 → 证据 → 明细', () => {
+  const app = source('App.tsx')!
+  const at = (tag: string) => {
+    const i = app.indexOf(`<${tag}`)
+    expect(i, `App.tsx 里找不到 <${tag}`).toBeGreaterThan(-1)
+    return i
+  }
+
+  it('结论(汇总)在证据(曲线)之前', () => {
+    expect(at('SummaryPanel')).toBeLessThan(at('EquityChart'))
+  })
+
+  it('对比表紧随汇总,在曲线之前', () => {
+    expect(at('ComparisonTable')).toBeGreaterThan(at('SummaryPanel'))
+    expect(at('ComparisonTable')).toBeLessThan(at('EquityChart'))
+  })
+
+  it('PNG 备注与局限区块都【紧跟曲线】,中间不插数字区块', () => {
+    const chart = at('EquityChart')
+    const png = app.indexOf('className="pngnote"')
+    const limits = at('LimitationsPanel')
+    expect(png).toBeGreaterThan(chart)
+    expect(limits).toBeGreaterThan(chart)
+    // 曲线与局限之间除了 PNG 备注不得再有别的区块
+    const between = app.slice(chart, limits)
+    for (const forbidden of ['<SummaryPanel', '<ComparisonTable', '<TradeList']) {
+      expect(between, `${forbidden} 横在曲线与局限之间`).not.toContain(forbidden)
+    }
+  })
+
+  it('交易清单排最后', () => {
+    const trade = at('TradeList')
+    for (const earlier of ['SummaryPanel', 'ComparisonTable', 'EquityChart']) {
+      expect(trade).toBeGreaterThan(at(earlier))
+    }
+  })
+
+  it('单策略给回执、多策略给对比:perStrategy 按策略数量切换', () => {
+    expect(app).toContain('perStrategy={runResult.results.length === 1}')
+  })
+
+  it('回执【始终】渲染 —— 对账行与假设文案不随策略数量消失', () => {
+    // 先剥注释 —— docstring 里也提到「对账」,按裸子串找会命中说明文字
+    // 而不是那行代码(与 `<dl>` 那条门同类的误报)。
+    const sp = source('components/SummaryPanel.tsx')!
+      .split('\n')
+      .filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l))
+      .join('\n')
+    // 对账行与假设在 perStrategy 分支【之外】(在它之后、且不在 if 块里)
+    const branch = sp.indexOf('if (perStrategy)')
+    expect(branch).toBeGreaterThan(-1)
+    expect(sp.indexOf("text: ' ✓ 对账")).toBeGreaterThan(branch)
+    expect(sp.indexOf('assumptions.forEach')).toBeGreaterThan(branch)
+    // 且 App 无条件渲染它(没有 results.length 的条件包裹)
+    expect(app).not.toMatch(/results\.length\s*===\s*1\s*&&\s*<SummaryPanel/)
+  })
+
+  it('交易清单多策略时渲染可切换的策略名', () => {
+    const tl = source('components/TradeList.tsx')!
+    expect(tl).toContain('role="tablist"')
+    expect(tl).toContain('results.length > 1')   // 单策略不渲染
+    expect(tl).toContain('aria-selected')
   })
 })

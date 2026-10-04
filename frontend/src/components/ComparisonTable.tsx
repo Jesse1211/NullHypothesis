@@ -24,7 +24,12 @@ export default function ComparisonTable({ results }: ComparisonTableProps) {
     <section className="zone" aria-label="并排对比">
       <div className="zhead">
         <span className="ztitle">并排对比</span>
-        <span className="zsub">仅陈述数字</span>
+        {/* 多策略时本表是按策略数字的**唯一**落点(回执只留整次运行的属性),
+            故把区间与交易日数带上 —— 否则这些数字失去了时间上下文。 */}
+        <span className="zsub">
+          {results[0].summary.start} → {results[0].summary.end}
+          {' · '}{integer(results[0].summary.bars)} 个交易日 · 仅陈述数字
+        </span>
       </div>
       <div className="tblwrap">
         <table className="comparison">

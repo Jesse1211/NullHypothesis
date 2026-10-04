@@ -24,9 +24,18 @@ export interface SummaryPanelProps {
   assumptions: string[]
   /** 本次运行的费率 —— 来自请求,后端原样回传。 */
   fee?: number
+  /** 多策略时按策略的数字交给对比表,回执只留**整次运行**的属性
+   *  (区间/交易日数/初始资金/费率/对账行/假设)——
+   *  两处相邻列出同一组数字会让人以为自己漏看了某个差别。
+   *
+   *  **对账行与假设文案仍然留在回执里**:它们是整次运行的属性,
+   *  且是 ADR-021/I3 在界面上的落点,不随策略数量消失。 */
+  perStrategy?: boolean
 }
 
-export default function SummaryPanel({ results, assumptions, fee }: SummaryPanelProps) {
+export default function SummaryPanel({
+  results, assumptions, fee, perStrategy = true,
+}: SummaryPanelProps) {
   if (results.length === 0) return null
   // 区间/交易日数/初始资金对同一次运行的所有策略都相同,取第一条。
   const head = results[0].summary
@@ -48,18 +57,26 @@ export default function SummaryPanel({ results, assumptions, fee }: SummaryPanel
   }
   L({ cls: 'hr', text: THIN })
 
-  results.forEach((r, i) => {
-    const s = r.summary
-    if (i) L({ text: '' })
-    L({ text: ' ' }, { cls: 'n', text: r.strategy })
-    L({ text: '   期末资产  ' }, { cls: 'n', text: money(s.final_equity) })
+  if (perStrategy) {
+    results.forEach((r, i) => {
+      const s = r.summary
+      if (i) L({ text: '' })
+      L({ text: ' ' }, { cls: 'n', text: r.strategy })
+      L({ text: '   期末资产  ' }, { cls: 'n', text: money(s.final_equity) })
+      L(
+        { text: '   总收益    ' },
+        // 符号判断是纯判断,不是算术(ADR-025 第 5 条)
+        { cls: s.total_return_pct >= 0 ? 'pos' : 'neg', text: percent(s.total_return_pct) },
+      )
+      L({ text: '   交易次数  ' }, { cls: 'n', text: pad(integer(s.trade_count), 6) })
+    })
+  } else {
     L(
-      { text: '   总收益    ' },
-      // 符号判断是纯判断,不是算术(ADR-025 第 5 条)
-      { cls: s.total_return_pct >= 0 ? 'pos' : 'neg', text: percent(s.total_return_pct) },
+      { text: ' 策略        ' },
+      { cls: 'n', text: results.map((r) => r.strategy).join(', ') },
     )
-    L({ text: '   交易次数  ' }, { cls: 'n', text: pad(integer(s.trade_count), 6) })
-  })
+    L({ cls: 'hr', text: ' 按策略的数字见下方「并排对比」' })
+  }
 
   L({ cls: 'hr', text: THIN })
   L(

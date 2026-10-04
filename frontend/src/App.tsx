@@ -107,9 +107,6 @@ export default function App() {
     )
   }
 
-  // 交易清单显示哪条策略:多选时取第一条(与 ADR-038 的 results[0] 口径一致)
-  const tradeFocus = runResult?.results[0] ?? null
-
   return (
     <>
       <div className="topbar">
@@ -158,6 +155,29 @@ export default function App() {
 
           {runResult && (
             <>
+              {/* ── 1 · 结论 ──────────────────────────────────────────
+                  你问的是「账户最后会变成什么样」—— 答案排第一,不用滚。
+                  多策略时回执只留整次运行的属性,按策略的数字交给对比表
+                  (两处相邻列同一组数字会让人以为漏看了某个差别)。 */}
+              <section className="zone">
+                <div className="zhead">
+                  <span className="ztitle">回测汇总</span>
+                  <span className="zsub">后端算好的字段,前端零计算(I8)</span>
+                </div>
+                <SummaryPanel
+                  results={runResult.results}
+                  assumptions={runResult.assumptions}
+                  fee={ranFee}
+                  perStrategy={runResult.results.length === 1}
+                />
+              </section>
+
+              {/* ── 2 · 多策略的按策略数字 ──────────────────────────── */}
+              <ComparisonTable results={runResult.results} />
+
+              {/* ── 3 · 证据:曲线,以及【紧跟它】的来源与局限 ────────
+                  PNG 备注是这张图的出处,局限是读这张图的前提 —— 两者都
+                  必须贴着曲线,中间不插入任何数字区块(ADR-046/047)。 */}
               <section className="zone">
                 <div className="zhead">
                   <span className="ztitle">账户净值</span>
@@ -172,37 +192,24 @@ export default function App() {
                   initialCash={runResult.results[0].summary.initial_cash}
                 />
 
-                {/* 紧跟曲线 —— 位置本身是契约(ADR-046) */}
-                <LimitationsPanel
-                  assumptions={runResult.assumptions}
-                  summary={runResult.results[0].summary}
-                />
-
                 <div className="pngnote">
                   <span className="dot" />
                   <span>
                     归档 PNG:{runResult.results[0].png_path} · 与上图同源(I9)
                   </span>
                 </div>
-              </section>
 
-              <section className="zone">
-                <div className="zhead">
-                  <span className="ztitle">回测汇总</span>
-                  <span className="zsub">后端算好的字段,前端零计算(I8)</span>
-                </div>
-                <SummaryPanel
-                  results={runResult.results}
+                <LimitationsPanel
                   assumptions={runResult.assumptions}
-                  fee={ranFee}
+                  summary={runResult.results[0].summary}
                 />
               </section>
 
-              <ComparisonTable results={runResult.results} />
-
-              {tradeFocus && <TradeList result={tradeFocus} />}
+              {/* ── 4 · 明细 ─────────────────────────────────────────── */}
+              <TradeList results={runResult.results} />
             </>
           )}
+
         </main>
 
         <HistoryList

@@ -327,3 +327,24 @@ td .tag .k { width: 3px; height: 12px; border-radius: 2px; }
 
 .pngnote { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
 .pngnote .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--ok); flex: none; }
+
+/* ───────── 策略切换条(ADR-047:交易清单多策略)───────── */
+.tabs {
+  display: flex; gap: 1px; flex-wrap: wrap; margin-bottom: 9px;
+  border-bottom: 1px solid var(--line);
+}
+.tab {
+  font-family: var(--mono); font-size: 12px; color: var(--ink-3);
+  background: none; border: 0; border-bottom: 2px solid transparent;
+  padding: 6px 11px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 7px;
+  margin-bottom: -1px;
+}
+.tab:hover { color: var(--ink-2); }
+.tab.on { color: var(--ink); border-bottom-color: var(--accent); }
+.tab .cnt {
+  font-size: 10.5px; color: var(--ink-3);
+  background: var(--surface-2); border-radius: 99px; padding: 1px 6px;
+  font-variant-numeric: tabular-nums;
+}
+.tab.on .cnt { background: var(--accent-soft); color: var(--accent); }
