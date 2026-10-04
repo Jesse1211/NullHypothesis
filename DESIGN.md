@@ -273,9 +273,18 @@ self.order(shares=n)    # 绝对股数,n>0 买、n<0 卖
 
 ```python
 target = floor(w * investable / Open)        # 钉死的公式不变
-while target > 0 and target * Open * (1 + rate) > investable:
-    target -= 1                               # 只在真正买不起时生效
+while target > shares_held and (target - shares_held) * Open * (1 + rate) > cash:
+    target -= 1                               # 只在【增量】真正买不起时生效
 ```
+
+**约束作用于差额,不是整个仓位。** 已持有的股份不需要再买一次,故只有
+`target - shares_held` 这部分要用现金负担。
+
+*(2026-10-04 修正:本条初版写作 `target * Open * (1+rate) > investable` ——
+对**整个仓位**计费。但 `investable` 把已持股按 `Open` 计入了,而循环却对
+全部股份收费,于是 `shares_held > 0` 时过度递减。实测后果:买入持有在第二根
+K 线上会**卖出 1 股**(差额 −1)然后来回倒腾。三个钉死 fixture 都从空仓起,
+故全部照常通过 —— 缺陷只在持仓后出现。由 T8 的 `--fee` 端到端门抓到。)*
 
 - `weight = 0.5` → **1847** 股,**与原公式完全一致**(本来就买得起,约束不触发)
 - `weight = 1.0` → **3689** 股(原公式的 3694 超买)

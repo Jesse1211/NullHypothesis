@@ -475,8 +475,20 @@ class Backtest:
             # `target * Open <= investable` 由 floor 本身保证,循环一次都不转
             # —— T4 全部钉死 fixture(adr016_* / adr014_* / adr012_* /
             # adr041_*)的费率均为 0,故它们的期望值一个未动。
+            # 约束作用于**差额**,不是整个仓位:已持有的股份不需要再买一次,
+            # 故只有 `target_shares - shares_held` 这部分要用现金负担。
+            #
+            # 本条初版对**整个仓位**计费(`target * unit_cost > investable`)。
+            # 但 `investable` 已把持股按 `Open` 计入,循环却对全部股份收费,
+            # 于是 `shares_held > 0` 时过度递减 —— 实测后果:买入持有在第二根
+            # K 线上**卖出 1 股**(差额 −1)然后来回倒腾。三个钉死 fixture 都
+            # 从空仓起,故全部照常通过,缺陷只在持仓后出现。
+            # (ADR-014a 的 2026-10-04 修正,由 T8 的 `--fee` 端到端门抓到。)
             unit_cost = open_price * (1.0 + self.fee_rate)
-            while target_shares > 0 and target_shares * unit_cost > investable:
+            while (
+                target_shares > shares_held
+                and (target_shares - shares_held) * unit_cost > self._account.cash
+            ):
                 target_shares -= 1
 
             delta = target_shares - shares_held

@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Sequence
 
 from .engine import Backtest, Fill, ShareOrder, TargetOrder, bar_date_str
+from .errors import StrategyError
 from .strategy import ShareIntent, Strategy, TargetIntent, load_strategy
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -189,7 +190,15 @@ def _run_one(
 
     # ADR-036:init() 在第 0 根之前恰调用一次,此时 data 零行、equity == cash。
     strat._enter_init(data=df.iloc[0:0].copy(), cash=cash)
-    strat.init()
+    try:
+        strat.init()
+    except StrategyError:
+        raise                                  # 已是契约异常,不再包一层
+    except Exception as exc:                   # ADR-022
+        raise StrategyError(
+            f"策略 {strategy_name} 在 init() 中抛出 {type(exc).__name__}: {exc}",
+            strategy=strategy_name, bar_index=-1, date="<init>",
+        ) from exc
     strat._exit_init()
 
     equity: list[EquityPoint] = []
@@ -218,7 +227,20 @@ def _run_one(
         strat._bind_account(
             cash=bt.cash, shares=bt.shares, equity=bt.equity_at(close)
         )
-        strat.next()
+        try:
+            strat.next()
+        except StrategyError:
+            # 策略请求非法值时 Strategy 已按 ADR-022 抛了带上下文的契约异常。
+            raise
+        except Exception as exc:
+            # ADR-022:立即终止。消息含**交易日序号 + 日期**,原始 traceback
+            # 由 `__cause__` 携带 —— 策略 bug 被吞掉会产生一条你以为可信
+            # 却不可信的曲线,那是 v0 最该避开的失真。
+            raise StrategyError(
+                f"策略 {strategy_name} 在第 {i + 1} 个交易日({date})抛出 "
+                f"{type(exc).__name__}: {exc}",
+                strategy=strategy_name, bar_index=i, date=date,
+            ) from exc
         strat._exit_next()
 
         bt.enqueue_intent(strat.pending_intent)
