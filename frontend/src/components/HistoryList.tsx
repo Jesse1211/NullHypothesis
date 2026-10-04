@@ -1,34 +1,35 @@
-/** T14 · 右栏历史(`histo`)+ 归档详情。
+/** T14 · 归档列表 —— **左栏**(ADR-048 的「历史」tab)。
  *
- * **ADR-032**:归档项**只显示 PNG 快照**,不重建交互图 —— 归档的意义是
- * 「当时跑出来就是这样」,用当时那张图,而不是用今天的代码重画一遍。
- * 图像 URL 走专用端点(ADR-045),不是 `/out/...` 静态路径。
+ * 只负责列表。选中那次的 PNG 与汇总归 `ArchiveDetail`(主栏)—— 两栏布局
+ * 下一个组件没法同时待在两边,故 ADR-048 把原来横跨两栏的 `HistoryList`
+ * 拆成了两个。
  */
 
-import type { ArchivedRun, RunListItem } from '../types'
-import { money, pngUrl } from '../format'
+import type { RunListItem } from '../types'
+import { money } from '../format'
 
 export interface HistoryListProps {
   runs: RunListItem[]
-  selected: ArchivedRun | null
+  /** 当前选中的 `run_id` —— 只用来标高亮,不需要整个 `ArchivedRun`。 */
+  selectedId: string | null
   onSelect: (runId: string) => void
 }
 
-export default function HistoryList({ runs, selected, onSelect }: HistoryListProps) {
+export default function HistoryList({ runs, selectedId, onSelect }: HistoryListProps) {
   return (
-    <aside className="histo">
+    <aside className="rail">
       <span className="lbl">历史 · out/</span>
 
       {runs.length === 0 ? (
         <div className="emptybox">
-          还没有跑过 —— 上面跑一次就会出现在这里。
+          还没有跑过 —— 去「跑一次」跑一回就会出现在这里。
         </div>
       ) : (
         <div>
           {runs.map((r) => (
             <button
               type="button" key={r.run_id}
-              className={`hitem${selected?.run_id === r.run_id ? ' cur' : ''}`}
+              className={`hitem${selectedId === r.run_id ? ' cur' : ''}`}
               onClick={() => onSelect(r.run_id)}
             >
               <div className="ts">{r.run_id}</div>
@@ -46,33 +47,6 @@ export default function HistoryList({ runs, selected, onSelect }: HistoryListPro
         扫描 <code>out/</code> 的时间戳目录(ADR-024/032)。
         点开看当时的归档 PNG 与汇总 —— 不重建交互图。
       </p>
-
-      {selected && (
-        <div className="archive-detail">
-          <span className="lbl">{selected.run_id}</span>
-          {selected.results.map((r) => (
-            <figure key={r.strategy}>
-              <figcaption>
-                {r.strategy} · 期末 {money(r.summary.final_equity)}
-              </figcaption>
-              {/* 归档快照,不是 Recharts(ADR-032);URL 见 ADR-045 */}
-              <img
-                src={pngUrl(selected.run_id, r.png_path)}
-                alt={`${r.strategy} 净值曲线`}
-              />
-            </figure>
-          ))}
-          {selected.comparison_png_path && (
-            <figure>
-              <figcaption>对比</figcaption>
-              <img
-                src={pngUrl(selected.run_id, selected.comparison_png_path)}
-                alt="多策略对比"
-              />
-            </figure>
-          )}
-        </div>
-      )}
     </aside>
   )
 }

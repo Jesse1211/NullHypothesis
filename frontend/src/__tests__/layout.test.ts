@@ -48,6 +48,8 @@ const PINNED_FILES = [
   // ADR-046 补入
   'components/TradeList.tsx',
   'components/LimitationsPanel.tsx',
+  // ADR-048 从 HistoryList 拆出
+  'components/ArchiveDetail.tsx',
 ]
 
 // T13/T14 的组件:只接 props,不自己取数。
@@ -59,6 +61,7 @@ const PROPS_ONLY = [
   'components/ErrorCard.tsx',
   'components/TradeList.tsx',
   'components/LimitationsPanel.tsx',
+  'components/ArchiveDetail.tsx',
 ]
 
 describe('ADR-037b 布局契约', () => {
@@ -105,12 +108,17 @@ describe('ADR-046 布局契约(批准稿 8QUBMStfEymniHPnkUFYiP)', () => {
   const app = source('App.tsx')!
   const css = cssSource
 
-  it('三栏骨架:rail / main / histo', () => {
-    for (const cls of ['rail', 'main', 'histo']) {
+  it('两栏骨架:rail / main(ADR-048 取代 ADR-046 的三栏)', () => {
+    for (const cls of ['rail', 'main']) {
       expect(css, `styles.css 缺 .${cls}`).toContain(`.${cls}`)
     }
-    // 三栏 grid,不是单栏堆叠
-    expect(css).toMatch(/grid-template-columns:\s*268px\s+minmax\(0,\s*1fr\)\s+232px/)
+    // 两栏 grid,不是单栏堆叠、也不再是三栏
+    expect(css).toMatch(/grid-template-columns:\s*268px\s+minmax\(0,\s*1fr\);/)
+    // 只看**声明**,不看注释 —— 解释「232px 历史栏已移除」的那句注释
+    // 本身含 232px。按行首字符过滤不够(CSS 块注释的续行不以 * 开头),
+    // 所以整段剥掉 /* … */。
+    const decls = css.replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(decls, '右侧 232px 历史栏应已被 ADR-048 移除').not.toContain('232px')
     expect(app).toContain('className="shell"')
   })
 
@@ -248,5 +256,64 @@ describe('ADR-047 主栏顺序:结论 → 证据 → 明细', () => {
     expect(tl).toContain('role="tablist"')
     expect(tl).toContain('results.length > 1')   // 单策略不渲染
     expect(tl).toContain('aria-selected')
+  })
+})
+
+// ═══════════════ ADR-048 · 顶栏导航 ═══════════════
+
+describe('ADR-048 nav bar:跑一次 / 历史', () => {
+  const app = source('App.tsx')!
+
+  it('顶栏有 tablist,两个 tab', () => {
+    expect(app).toContain('role="tablist"')
+    expect(app).toContain("{ id: 'run', label: '跑一次' }")
+    expect(app).toContain("id: 'history', label: '历史'")
+    expect(app).toContain('aria-selected')
+  })
+
+  it('tab 状态归 App(OQ-10),类型是二选一', () => {
+    expect(app).toMatch(/useState<Tab>\('run'\)/)
+    expect(app).toContain("export type Tab = 'run' | 'history'")
+  })
+
+  it('左栏槽位按 tab 二选一:RunForm 或 HistoryList', () => {
+    expect(app).toMatch(/tab === 'run' \?[\s\S]{0,80}<RunForm/)
+    expect(app).toContain('<HistoryList')
+  })
+
+  it('历史 tab 带条数角标', () => {
+    expect(app).toContain('badge: runs.length')
+  })
+
+  it('跑完【不】自动切 tab —— 把人弹走是劫持', () => {
+    const onRun = app.slice(app.indexOf('async function onRun'),
+                            app.indexOf('async function onSelectRun'))
+    expect(onRun, 'onRun 里不应出现 setTab').not.toContain('setTab')
+  })
+
+  it('错误按来源分开 —— 历史页的错不跑到运行页', () => {
+    expect(app).toContain('runError')
+    expect(app).toContain('historyError')
+    // onSelectRun 只写 historyError,不碰 runError
+    const sel = app.slice(app.indexOf('async function onSelectRun'),
+                          app.indexOf('function toggleStrategy'))
+    expect(sel).toContain('setHistoryError')
+    expect(sel).not.toContain('setRunError')
+  })
+
+  it('归档详情已从 HistoryList 拆出到 ArchiveDetail', () => {
+    const hl = source('components/HistoryList.tsx')!
+    // 列表不再渲染 PNG —— 那是 ArchiveDetail 的事
+    expect(hl).not.toContain('<img')
+    expect(source('components/ArchiveDetail.tsx')!).toContain('<img')
+  })
+
+  it('切 tab 不清状态 —— 切走再切回结果还在', () => {
+    // setTab 只出现在 nav 的 onClick 里,不与任何 setXxx(null) 同行
+    const setTabCalls = app.split('\n').filter((l) => l.includes('setTab('))
+    expect(setTabCalls.length).toBeGreaterThan(0)
+    for (const l of setTabCalls) {
+      expect(l, `切 tab 时清了状态:${l.trim()}`).not.toMatch(/set\w+\(null\)/)
+    }
   })
 })

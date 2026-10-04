@@ -108,24 +108,47 @@ body {
 }
 .themebtn:hover { color: var(--ink); }
 
+/* ADR-048:**两栏**。左栏槽位由 nav 决定装表单还是归档列表;
+   右侧原来的 232px 历史栏消失,主栏因此宽出 232px —— 曲线与七列交易表
+   都更舒展。 */
 .shell {
   display: grid;
-  grid-template-columns: 268px minmax(0, 1fr) 232px;
+  grid-template-columns: 268px minmax(0, 1fr);
   align-items: start;
   min-height: calc(100% - 46px);
 }
 .rail { border-right: 1px solid var(--line); background: var(--surface); padding: 18px 18px 40px; }
 .main { padding: 18px 22px 48px; min-width: 0; }
-.histo { border-left: 1px solid var(--line); background: var(--surface); padding: 18px 16px 40px; }
 
 @media (max-width: 1080px) {
   .shell { grid-template-columns: 252px minmax(0, 1fr); }
-  .histo { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); }
 }
 @media (max-width: 760px) {
   .shell { grid-template-columns: 1fr; }
   .rail { border-right: 0; border-bottom: 1px solid var(--line); }
   .main { padding: 18px 16px 40px; }
+}
+
+/* ───────── 顶栏导航(ADR-048)───────── */
+.nav { display: flex; gap: 2px; margin-left: 18px; align-self: stretch; }
+.navtab {
+  font: inherit; font-size: 13px; color: var(--ink-3);
+  background: none; border: 0; border-bottom: 2px solid transparent;
+  padding: 0 13px; cursor: pointer; margin-bottom: -11px;
+  display: inline-flex; align-items: center; gap: 7px;
+}
+.navtab:hover { color: var(--ink-2); }
+.navtab.on { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+.navtab .badge {
+  font-family: var(--mono); font-size: 10.5px; color: var(--ink-3);
+  background: var(--surface-2); border-radius: 99px; padding: 1px 6px;
+  font-variant-numeric: tabular-nums;
+}
+.navtab.on .badge { background: var(--accent-soft); color: var(--accent); }
+
+@media (max-width: 560px) {
+  .nav { margin-left: 10px; }
+  .navtab { padding: 0 9px; font-size: 12.5px; }
 }
 
 /* ───────── 表单栏 ───────── */
@@ -299,7 +322,7 @@ td .tag .k { width: 3px; height: 12px; border-radius: 2px; }
   border: 1px dashed var(--line); border-radius: var(--r);
   padding: 16px 12px; text-align: center; font-size: 12px; color: var(--ink-3); line-height: 1.5;
 }
-.archive-detail { margin-top: 14px; }
+.archive-detail { margin-top: 2px; }
 .archive-detail figure { margin: 0 0 12px; }
 .archive-detail figcaption { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-bottom: 5px; }
 .archive-detail img { max-width: 100%; border: 1px solid var(--line); border-radius: var(--r); display: block; }

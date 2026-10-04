@@ -14,6 +14,7 @@ import ComparisonTable from '../components/ComparisonTable'
 import EquityChart from '../components/EquityChart'
 import ErrorCard from '../components/ErrorCard'
 import HistoryList from '../components/HistoryList'
+import ArchiveDetail from '../components/ArchiveDetail'
 
 const BASE = fixture as unknown as RunResponse
 
@@ -257,29 +258,38 @@ describe('ADR-032 历史', () => {
   }
 
   it('历史为空 → 空态文案', () => {
-    render(<HistoryList runs={[]} selected={null} onSelect={vi.fn()} />)
+    render(<HistoryList runs={[]} selectedId={null} onSelect={vi.fn()} />)
     expect(screen.getByText(/还没有跑过/)).toBeInTheDocument()
   })
 
-  it('点历史项 → 显示归档 PNG + 汇总', () => {
-    const { container } = render(
+  it('列表项显示 run_id / 策略 / 数据 / 期末', () => {
+    render(
       <HistoryList
         runs={[{
           run_id: archived.run_id, strategies: ['buy_and_hold.py'],
           data_file: 'aapl.csv',
           final_equity: archived.results[0].summary.final_equity,
         }]}
-        selected={archived}
+        selectedId={null}
         onSelect={vi.fn()}
       />,
     )
+    expect(screen.getByText(archived.run_id)).toBeInTheDocument()
+    expect(screen.getByText(/aapl\.csv/)).toBeInTheDocument()
+  })
+
+  it('未选中归档 → 详情区是空态,不是白屏', () => {
+    render(<ArchiveDetail run={null} />)
+    expect(screen.getByText(/选一次归档/)).toBeInTheDocument()
+  })
+
+  it('选中归档 → 显示归档 PNG + 汇总', () => {
+    const { container } = render(<ArchiveDetail run={archived} />)
     const img = container.querySelector('.archive-detail img') as HTMLImageElement
     expect(img).toBeTruthy()
     // ADR-045:图像走专用端点,**不是** `/out/...` 静态路径。
     const src = img.getAttribute('src')!
-    expect(src).toBe(
-      `/api/runs/${archived.run_id}/png/buy_and_hold_equity.png`,
-    )
+    expect(src).toBe(`/api/runs/${archived.run_id}/png/buy_and_hold_equity.png`)
     expect(src.startsWith('/out/')).toBe(false)
   })
 
@@ -288,9 +298,7 @@ describe('ADR-032 历史', () => {
       ...archived,
       comparison_png_path: `out/${archived.run_id}/comparison.png`,
     }
-    const { container } = render(
-      <HistoryList runs={[]} selected={withComp} onSelect={vi.fn()} />,
-    )
+    const { container } = render(<ArchiveDetail run={withComp} />)
     const srcs = Array.from(container.querySelectorAll('.archive-detail img'))
       .map((i) => i.getAttribute('src')!)
     expect(srcs).toContain(`/api/runs/${archived.run_id}/png/comparison.png`)
@@ -298,12 +306,16 @@ describe('ADR-032 历史', () => {
   })
 
   it('归档详情中【不存在】Recharts 容器 —— 只显示 PNG 快照', () => {
-    const { container } = render(
-      <HistoryList runs={[]} selected={archived} onSelect={vi.fn()} />,
-    )
+    const { container } = render(<ArchiveDetail run={archived} />)
     const detail = container.querySelector('.archive-detail')!
     expect(within(detail as HTMLElement).queryByText(/recharts/i)).toBeNull()
     expect(detail.querySelector('.recharts-wrapper')).toBeNull()
-    expect(detail.querySelector('.chart')).toBeNull()
+    expect(detail.querySelector('.chartbox')).toBeNull()
+  })
+
+  it('ADR-021:归档也带着那两条假设', () => {
+    const { container } = render(<ArchiveDetail run={archived} />)
+    const text = container.textContent ?? ''
+    for (const a of BASE.assumptions) expect(text).toContain(a)
   })
 })
