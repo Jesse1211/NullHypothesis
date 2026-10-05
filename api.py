@@ -227,9 +227,13 @@ def _run_payload(report, png_paths: dict[str, Any]) -> dict[str, Any]:
         "results": [
             {
                 "strategy": r.strategy,
-                # ADR-038 的 equity[] 只投影 date 与 equity 两个键 ——
+                # ADR-038 的 equity[] 投影 date / equity / close 三个键
+                # (`close` 由 ADR-049 补入,供前端画价格对照曲线)——
                 # cash/shares 是内部对账所需,不出 API。
-                "equity": [{"date": p.date, "equity": p.equity} for p in r.equity],
+                "equity": [
+                    {"date": p.date, "equity": p.equity, "close": p.close}
+                    for p in r.equity
+                ],
                 "trades": [
                     {
                         "date": f.date, "side": f.side, "shares": f.shares,

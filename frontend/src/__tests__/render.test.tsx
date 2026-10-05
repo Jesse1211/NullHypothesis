@@ -8,6 +8,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import fixture from '../__fixtures__/run_response.json'
+import chartSource from '../components/EquityChart.tsx?raw'
 import type { ApiError, RunResponse, StrategyResult } from '../types'
 import SummaryPanel from '../components/SummaryPanel'
 import ComparisonTable from '../components/ComparisonTable'
@@ -154,11 +155,78 @@ describe('I9 图表数据绑定', () => {
     )
     expect(BASE.results.length).toBe(2)
     expect(container.querySelector('.chartbox')).toBeTruthy()
-    // 图例每条策略一个可点按钮(批准稿:点击切换显隐)
+    // 图例 = 价格对照项(ADR-049,排首位)+ 每条策略一项
     const legend = Array.from(container.querySelectorAll('.lg'))
-    expect(legend).toHaveLength(2)
+    expect(legend).toHaveLength(1 + BASE.results.length)
     expect(legend.map((b) => b.getAttribute('data-series')))
-      .toEqual(BASE.results.map((r) => r.strategy))
+      .toEqual(['__price__', ...BASE.results.map((r) => r.strategy)])
+  })
+})
+
+// ═══════════════ ADR-049:价格对照曲线 ═══════════════
+
+describe('ADR-049 价格对照曲线', () => {
+  it('双 y 轴:净值在左、价格在右', () => {
+    const { container } = render(
+      <EquityChart
+        results={BASE.results}
+        initialCash={BASE.results[0].summary.initial_cash}
+      />,
+    )
+    // Recharts 在 jsdom 零尺寸下不渲染 svg,故断言源码级契约:
+    // 两个 YAxis 各有自己的 yAxisId,且价格轴 orientation="right"
+    const src = chartSource
+    expect(src).toContain('yAxisId="equity"')
+    expect(src).toContain('yAxisId="price"')
+    expect(src).toMatch(/yAxisId="price"[\s\S]{0,40}orientation="right"/)
+    expect(container.querySelector('.chartbox')).toBeTruthy()
+  })
+
+  it('价格线用右轴,策略线用左轴 —— 不得混轴', () => {
+    const src = chartSource
+    // 每条 <Line> 都必须带 yAxisId,否则 Recharts 会落到默认轴上
+    const lines = src.match(/<Line\b[\s\S]*?\/>/g) ?? []
+    expect(lines.length).toBeGreaterThanOrEqual(2)
+    for (const l of lines) {
+      expect(l, `有 <Line> 没指定 yAxisId:${l.slice(0, 60)}`).toMatch(/yAxisId=/)
+    }
+    expect(src).toMatch(/yAxisId="price"[\s\S]{0,200}dataKey={PRICE_KEY}/)
+  })
+
+  it('图例含价格项且可切换显隐', () => {
+    const { container } = render(
+      <EquityChart
+        results={[BASE.results[0]]}
+        initialCash={BASE.results[0].summary.initial_cash}
+      />,
+    )
+    const price = container.querySelector('[data-series="__price__"]')
+    expect(price).toBeTruthy()
+    expect(price!.tagName).toBe('BUTTON')
+  })
+
+  it('价格值读自后端的 equity[].close,不自己取价(ADR-025)', () => {
+    // 这条是 I8 在新字段上的延伸:构造一份把 close 改成可辨认值的 mock,
+    // 断言界面显示的是【那个值】而不是任何别处能推出来的数。
+    const r = clone(BASE.results[0])
+    const marker = 1234.56
+    r.equity[r.equity.length - 1].close = marker
+    const { container } = render(
+      <EquityChart results={[r]} initialCash={r.summary.initial_cash} />,
+    )
+    const val = container
+      .querySelector('[data-series="__price__"] .val')!.textContent!
+    expect(val).toContain('1,234.56')
+  })
+
+  it('前端不做归一化 —— 源码里没有「除以首值」那类算术(OQ-04)', () => {
+    const src = chartSource
+      .split('\n')
+      .filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l))
+      .join('\n')
+    // 归一化的典型形态:除以 equity[0] / close[0] / initialCash
+    expect(src).not.toMatch(/\/\s*(initialCash|equity\[0\]|close\[0\])/)
+    expect(src).not.toMatch(/\.close\s*\/|\.equity\s*\//)
   })
 })
 

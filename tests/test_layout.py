@@ -60,7 +60,9 @@ SYMBOLS = [
 
 # ADR-044 的值对象 —— T6/T7 的门要**手工构造**它们,故字段名是硬契约。
 VALUE_OBJECTS = [
-    ("nullhypothesis.run", "EquityPoint", {"date", "cash", "shares", "equity"}),
+    # `close` 由 ADR-049 补入(前端要在同一张图上画价格对照曲线)。
+    ("nullhypothesis.run", "EquityPoint",
+     {"date", "cash", "shares", "equity", "close"}),
     ("nullhypothesis.run", "RunRequest", {"strategies", "data_file", "cash", "fee"}),
     ("nullhypothesis.run", "RunResult",
      {"strategy", "equity", "trades", "trades_ledger", "summary"}),

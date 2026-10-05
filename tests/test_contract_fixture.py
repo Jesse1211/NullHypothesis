@@ -152,6 +152,8 @@ def test_fixture_carries_the_fields_t13_consumes():
     assert len(f["results"]) == 2, "契约 fixture 必须是多策略响应(T13 要画对比表)"
     for res in f["results"]:
         assert set(res) == {"strategy", "equity", "trades", "summary", "png_path"}
-        assert res["equity"] and set(res["equity"][0]) == {"date", "equity"}
+        # `close` 由 ADR-049 补入 —— T13 用它画价格对照曲线
+        assert res["equity"]
+        assert set(res["equity"][0]) == {"date", "equity", "close"}
     assert f["comparison_png_path"], "多策略响应必须有 comparison_png_path"
     assert len(f["assumptions"]) == 2

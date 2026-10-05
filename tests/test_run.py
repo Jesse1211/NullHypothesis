@@ -356,3 +356,162 @@ def test_run_result_has_no_png_path():
     """png_path 的值含 run_id,而 run_id 由 CLI 层的 create_archive_dir 产生 ——
     聚合根不拥有输出目录(ADR-044)。"""
     assert "png_path" not in RunResult.__dataclass_fields__
+
+
+# ═══════════ 门:买入持有的净值曲线必须对上价格曲线(ADR-049)═══════════
+#
+# v0 的验收标准是「一条曲线」,而**买入持有是唯一有封闭解的策略** ——
+# 它的净值形状必须与价格形状完全一致。这是整条管线最强的一个外部校验:
+# 引擎里任何一处把价格、股数、现金或估值搞错,这条门都会红,而曲线本身
+# 看起来仍然完全合理。
+#
+# 精确表述(不是「大致成比例」):
+#     equity[i] == shares[i] * Close[i] + cash[i]        逐日,零误差
+#     (equity[i] - cash[i]) / Close[i] == 持股数          【完全恒定】
+#
+# **必须减掉 cash**:买不满整股会剩一点现金(实测 fee=0 时 0.10、
+# fee=0.0013 时 6.78),那是个固定偏移。直接用 `equity/Close` 会看到
+# 8.3e-03 的漂移 —— 那不是缺陷,是残余现金。不减 cash 的门要么写不出来,
+# 要么得用一个松到抓不住真缺陷的容差。
+
+
+def _bah_run(fee: float, cash: float = 100000.0):
+    """跑一次买入持有,返回 (RunResult, Close 列表)。"""
+    df = load_csv(ROOT / "data" / "synthetic.csv")
+    r = run([ROOT / "strategies" / "buy_and_hold.py"], df, cash=cash, fee=fee)[0]
+    return r, df["Close"].tolist()
+
+
+@pytest.mark.parametrize("fee", [0.0, 0.0013])
+def test_buy_and_hold_equity_decomposes_exactly(fee):
+    """`equity == shares * Close + cash`,逐日**零误差**。
+
+    这同时验了三件事:估值用的是 Close(ADR-003)、持股数没漂、
+    现金没被重复计入。
+    """
+    r, closes = _bah_run(fee)
+    assert len(r.equity) == len(closes)
+    for i, p in enumerate(r.equity):
+        assert p.equity == pytest.approx(p.shares * closes[i] + p.cash, abs=1e-9), (
+            f"第 {i} 根({p.date}):equity={p.equity} 与 "
+            f"shares*Close+cash={p.shares * closes[i] + p.cash} 不符"
+        )
+
+
+@pytest.mark.parametrize("fee", [0.0, 0.0013])
+def test_buy_and_hold_tracks_price_with_a_constant_ratio(fee):
+    """**买入持有的净值曲线对上价格曲线** —— 成交后比值完全恒定。
+
+    `(equity - cash) / Close` 必须逐日**恒等于持股数**。任何一处把成交价
+    记错、把股数算错、或把估值基准弄错,这个比值都会漂。
+    """
+    r, closes = _bah_run(fee)
+    held = r.equity[-1].shares
+    assert held > 0, "前提:买入持有最终必须真的持仓"
+
+    # 第 0 根还没成交(T+1 语义),从第 1 根起比
+    ratios = [
+        (p.equity - p.cash) / closes[i]
+        for i, p in enumerate(r.equity) if i >= 1
+    ]
+    assert min(ratios) == pytest.approx(held, abs=1e-9)
+    assert max(ratios) == pytest.approx(held, abs=1e-9)
+    assert max(ratios) - min(ratios) < 1e-9, (
+        f"比值不恒定:{min(ratios)} .. {max(ratios)} —— 净值没有跟住价格"
+    )
+
+
+def test_buy_and_hold_fee_only_effect_is_fewer_shares():
+    """手续费的**唯一**影响是少买几股,于是投入部分**永远**低一个固定比例。
+
+    这是用户那句「两条曲线永远有相同的差值比例」的可执行形式。实测:
+    3658/3663 = 0.9986349986,逐点一致到 1e-12。
+
+    反向也断言:比值必须 **< 1**(真的更差)且 **> 0.99**(只是手续费,
+    不是算错了量级)—— 否则「恒定」可以被一个恒为 1.0 的实现满足,
+    那正是「手续费没生效」的样子。
+    """
+    a, _ = _bah_run(0.0)
+    b, _ = _bah_run(0.0013)
+
+    sa, sb = a.equity[-1].shares, b.equity[-1].shares
+    assert sb < sa, f"收了手续费却没有少买股数:{sb} vs {sa}"
+
+    inv_a = [p.equity - p.cash for p in a.equity][1:]
+    inv_b = [p.equity - p.cash for p in b.equity][1:]
+    ratios = [y / x for x, y in zip(inv_a, inv_b)]
+
+    assert max(ratios) - min(ratios) < 1e-12, "差值比例不恒定"
+    assert ratios[0] == pytest.approx(sb / sa, abs=1e-12), (
+        "比例必须恰好等于股数比 —— 手续费的影响只经由股数发生"
+    )
+    assert 0.99 < ratios[0] < 1.0, (
+        f"比例 {ratios[0]} 不在 (0.99, 1.0) 内 —— 要么手续费没生效"
+        f"(恒为 1.0),要么量级算错了"
+    )
+
+
+@pytest.mark.parametrize("fee", [0.0, 0.0013])
+def test_buy_and_hold_residual_cash_is_preserved_exactly(fee):
+    """买不满整股剩下的现金必须**原样留着**,不得被抹掉。
+
+    上面那两条比值门都减掉了 `cash`,所以它们对 `cash` 本身是**盲的** ——
+    实测:在 `Account.apply` 里把买入后的小额余额清零(`< 10 → 0.0`),
+    458 条门**全绿**。I3 的影子账本门用的是 `rate=0.001`,余额大于这个
+    阈值,所以也碰不到。
+
+    精确断言:成交后每一天的 `cash` 恒等于「初始资金 − 成交额 − 手续费」,
+    且 > 0(本 fixture 下买不满整股必然有余额)。
+    """
+    r, _ = _bah_run(fee)
+    f = r.trades[0]
+    expect = 100000.0 - f.amount - f.fee
+    assert expect > 0.0, "前提:本 fixture 下必须真的剩下一点现金"
+
+    for p in r.equity[1:]:
+        assert p.cash == pytest.approx(expect, abs=1e-9), (
+            f"{p.date}:残余现金 {p.cash} != 初始 − 成交额 − 手续费 {expect}"
+        )
+    # 反向:它确实是个非零的小额,不是「恰好为 0 所以断言无意义」
+    assert 0.0 < expect < f.price, (
+        f"残余现金 {expect} 应在 (0, 一股价格) 内 —— 否则本门测不到东西"
+    )
+
+
+@pytest.mark.parametrize("fee", [0.0, 0.0013])
+def test_equity_point_close_is_the_same_close_used_for_valuation(fee):
+    """ADR-049:`EquityPoint.close` 必须是 CSV 的当日 Close **原值**。
+
+    它是前端画价格对照曲线的唯一来源(ADR-025 禁止前端自己取价),
+    所以不能是任何派生值。
+    """
+    r, closes = _bah_run(fee)
+    for i, p in enumerate(r.equity):
+        assert p.close == closes[i], f"第 {i} 根:close={p.close} != CSV {closes[i]}"
+
+
+def test_zero_trade_strategy_equity_is_flat_while_price_moves():
+    """反向对照:**不交易**时净值必须是水平线,而价格在动。
+
+    没有这条,一个「把 equity 直接设成 Close * 常数」的错误实现会通过
+    上面所有比值门 —— 它在买入持有下看起来完美。
+    """
+    df = load_csv(ROOT / "data" / "synthetic.csv")
+    src = ROOT / "tests" / "_idle_for_curve.py"
+    src.write_text(
+        "from nullhypothesis.strategy import Strategy\n"
+        "class Idle(Strategy):\n"
+        "    def next(self) -> None: pass\n",
+        encoding="utf-8",
+    )
+    try:
+        r = run([src], df, cash=100000.0, fee=0.0)[0]
+    finally:
+        src.unlink()
+
+    assert r.trades == []
+    eqs = {p.equity for p in r.equity}
+    assert eqs == {100000.0}, f"零交易的净值不是水平线:{sorted(eqs)[:5]}"
+    # 而价格确实在动 —— 证明上面那条不是因为数据本身平
+    closes = {p.close for p in r.equity}
+    assert len(closes) > 100, "前提:价格序列必须真的在变化"

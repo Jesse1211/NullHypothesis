@@ -7,6 +7,9 @@
 export interface EquityPoint {
   date: string
   equity: number
+  /** 当日收盘价(ADR-049)。后端给的原值 —— 前端不自己取价、不做归一化。
+   *  买入持有时净值曲线与它形状必须全同,那是一个肉眼可见的正确性检查。 */
+  close: number
 }
 
 export interface Trade {

@@ -238,7 +238,8 @@ def test_run_happy_path_shape(client, isolated_out):
     res = p["results"][0]
     assert set(res) == {"strategy", "equity", "trades", "summary", "png_path"}
     assert set(res["summary"]) == set(C["field_formats"])
-    assert set(res["equity"][0]) == {"date", "equity"}
+    # `close` 由 ADR-049 补入(前端画价格对照曲线用)
+    assert set(res["equity"][0]) == {"date", "equity", "close"}
 
 
 # ──────────── 数值一致性:必须真起 CLI 进程(关键门)────────────

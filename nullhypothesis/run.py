@@ -71,6 +71,12 @@ class EquityPoint:
     cash: float
     shares: int
     equity: float
+    # ADR-049:当日收盘价。**不是**派生量 —— 它就是 `equity_at` 的那个入参,
+    # 记在这里是为了让前端能在同一张图上画价格对照曲线(买入持有时两条
+    # 形状必须全同,那是一个肉眼可见的正确性检查),而 ADR-025 禁止前端
+    # 自己从别处取价。放在末尾且有默认值:前四个字段的顺序被 ADR-044
+    # 钉死,T5/T6/T7 的门大量使用位置构造。
+    close: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -252,6 +258,7 @@ def _run_one(
                 cash=bt.cash,
                 shares=bt.shares,
                 equity=bt.equity_at(close),
+                close=close,      # ADR-049:与 equity 同源的那个收盘价
             )
         )
 
