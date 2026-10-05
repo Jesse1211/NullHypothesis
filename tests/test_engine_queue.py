@@ -300,6 +300,19 @@ def test_i7_four_distinct_prices():
     for rejected in fx["reject_prices"]:
         assert fills[0].price != rejected
 
+    # ADR-046 的 `amount` 也必须按**成交价**算(此前无任何门断言它的值:
+    # 把 `amount` 单独改成由 Close 算,整个 suite 仍然绿 —— 只有两条
+    # 「bar 没有 Close 属性」的门会因 AttributeError 偶然失败,而一个
+    # 用自己拿得到的价格去算的实现连那两条都不会碰到)。
+    #
+    # 不写成 `== shares * price` 的同义反复:那对「把 amount 写成别的价格
+    # 乘出来」是盲的。这里逐一排除另外三个候选价的乘积。
+    assert fills[0].amount == fx["shares"] * fx["expect_fill_price"]
+    for rejected in fx["reject_prices"]:
+        assert fills[0].amount != fx["shares"] * rejected
+    # `fee` 同源(rate=0 时为 0,故另见下方 ADR-043 的费率门)
+    assert fills[0].fee == 0.0
+
 
 def test_decision_side_pairing_slice_length_per_bar():
     """决策侧配对:逐根断言 `next()` 被调用时 `len(self.data) == bar_index + 1`。
