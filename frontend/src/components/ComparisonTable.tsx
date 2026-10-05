@@ -6,12 +6,7 @@
 
 import type { StrategyResult } from '../types'
 import { integer, money0, orNull, percent } from '../format'
-import { SERIES_VARS } from './EquityChart'
-
-function cssVar(name: string): string {
-  if (typeof getComputedStyle !== 'function') return '#2C7BCE'
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#2C7BCE'
-}
+import { seriesColor } from './EquityChart'
 
 export interface ComparisonTableProps {
   results: StrategyResult[]
@@ -44,10 +39,7 @@ export default function ComparisonTable({ results }: ComparisonTableProps) {
               <tr key={r.strategy}>
                 <td>
                   <span className="tag">
-                    <span
-                      className="k"
-                      style={{ background: cssVar(SERIES_VARS[i % SERIES_VARS.length]) }}
-                    />
+                    <span className="k" style={{ background: seriesColor(i) }} />
                     {r.strategy}
                   </span>
                 </td>

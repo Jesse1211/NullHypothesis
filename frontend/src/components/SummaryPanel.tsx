@@ -14,9 +14,29 @@ import { integer, money, orNull, percent, percentUnsigned } from '../format'
 const BAR = '═'.repeat(43)
 const THIN = '─'.repeat(43)
 
+/** 回执里的一小段文字。`cls` 决定配色(`.receipt .n` 等),无 `cls` 即正文。 */
+interface Span {
+  cls?: string
+  text: string
+}
+
+/** 一行 = 若干段。 */
+type Line = Span[]
+
 /** 右对齐到固定宽度 —— 纯字符串排版,不是算术。 */
 function pad(s: string, w: number): string {
   return s.length >= w ? s : ' '.repeat(w - s.length) + s
+}
+
+/** 「标签 + 值」行。标签占固定宽度,值的样式默认是 `n`(高亮数字),
+ *  故等宽字体下所有值天然上下对齐 —— 回执形态的要点(ADR-046)。 */
+function row(label: string, value: string, cls = 'n', ...rest: Line): Line {
+  return [{ text: label }, { cls, text: value }, ...rest]
+}
+
+/** 分隔线、提示语等整行同色的内容。 */
+function rule(text: string, cls = 'hr'): Line {
+  return [{ cls, text }]
 }
 
 export interface SummaryPanelProps {
@@ -40,65 +60,64 @@ export default function SummaryPanel({
   // 区间/交易日数/初始资金对同一次运行的所有策略都相同,取第一条。
   const head = results[0].summary
 
-  const lines: Array<{ cls?: string; text: string }[]> = []
-  const L = (...parts: { cls?: string; text: string }[]) => lines.push(parts)
+  const lines: Line[] = []
 
-  L({ cls: 'hr', text: BAR })
-  L({ text: ' ' }, { cls: 'ttl', text: '回 测 结 果' })
-  L({ cls: 'hr', text: BAR })
-  L({ text: ' 区间        ' }, { cls: 'n', text: `${head.start} ~ ${head.end}` })
-  L({ text: ' 交易日数    ' }, { cls: 'n', text: integer(head.bars) })
-  L({ text: ' 初始资金    ' }, { cls: 'n', text: money(head.initial_cash) })
+  // ── 表头:整次运行的属性 ──
+  lines.push(
+    rule(BAR),
+    [{ text: ' ' }, { cls: 'ttl', text: '回 测 结 果' }],
+    rule(BAR),
+    row(' 区间        ', `${head.start} ~ ${head.end}`),
+    row(' 交易日数    ', integer(head.bars)),
+    row(' 初始资金    ', money(head.initial_cash)),
+  )
   if (fee !== undefined) {
-    L(
-      { text: ' 手续费率    ' }, { cls: 'n', text: fee.toFixed(4) },
-      ...(fee === 0 ? [{ cls: 'hr', text: '  (零成本基准)' }] : []),
-    )
+    // 零费率要标出来 —— 否则「赚了 8 倍」会被当成含成本的结果读。
+    const note: Line = fee === 0 ? [{ cls: 'hr', text: '  (零成本基准)' }] : []
+    lines.push(row(' 手续费率    ', fee.toFixed(4), 'n', ...note))
   }
-  L({ cls: 'hr', text: THIN })
+  lines.push(rule(THIN))
 
+  // ── 按策略的数字:单策略时在回执里,多策略时交给对比表 ──
   if (perStrategy) {
     results.forEach((r, i) => {
       const s = r.summary
-      if (i) L({ text: '' })
-      L({ text: ' ' }, { cls: 'n', text: r.strategy })
-      L({ text: '   期末资产  ' }, { cls: 'n', text: money(s.final_equity) })
-      L(
-        { text: '   总收益    ' },
-        // 符号判断是纯判断,不是算术(ADR-025 第 5 条)
-        { cls: s.total_return_pct >= 0 ? 'pos' : 'neg', text: percent(s.total_return_pct) },
+      if (i) lines.push([{ text: '' }])     // 策略之间空一行
+      lines.push(
+        [{ text: ' ' }, { cls: 'n', text: r.strategy }],
+        row('   期末资产  ', money(s.final_equity)),
+        // 正负配色是纯判断,不是算术(ADR-025 第 5 条)
+        row('   总收益    ', percent(s.total_return_pct),
+            s.total_return_pct >= 0 ? 'pos' : 'neg'),
+        row('   交易次数  ', pad(integer(s.trade_count), 6)),
       )
-      L({ text: '   交易次数  ' }, { cls: 'n', text: pad(integer(s.trade_count), 6) })
     })
   } else {
-    L(
-      { text: ' 策略        ' },
-      { cls: 'n', text: results.map((r) => r.strategy).join(', ') },
+    lines.push(
+      row(' 策略        ', results.map((r) => r.strategy).join(', ')),
+      rule(' 按策略的数字见下方「并排对比」'),
     )
-    L({ cls: 'hr', text: ' 按策略的数字见下方「并排对比」' })
   }
 
-  L({ cls: 'hr', text: THIN })
-  L(
-    { text: ' 最大跳空    ' }, { cls: 'n', text: percent(head.max_gap_pct) },
-    { cls: 'hr', text: `  ${orNull(head.max_gap_date)}` },
+  // ── 跳空、对账与假设:整次运行的属性,不随策略数量消失 ──
+  lines.push(
+    rule(THIN),
+    row(' 最大跳空    ', percent(head.max_gap_pct), 'n',
+        { cls: 'hr', text: `  ${orNull(head.max_gap_date)}` }),
+    row(' 均值跳空    ', pad(percentUnsigned(head.mean_abs_gap_pct), 7)),
+    rule(THIN),
+    // I3/ADR-021 在界面上的落点 —— 显式写成 span,门按这行字面量定位它。
+    [{ cls: 'chk', text: ' ✓ 对账:每日 现金+持股市值 == 总资产' }],
   )
-  L({ text: ' 均值跳空    ' }, { cls: 'n', text: pad(percentUnsigned(head.mean_abs_gap_pct), 7) })
-  L({ cls: 'hr', text: THIN })
-  L({ cls: 'chk', text: ' ✓ 对账:每日 现金+持股市值 == 总资产' })
   // ADR-021:后端逐字给的两条假设,不得改写
-  assumptions.forEach((a) => L({ cls: 'wn', text: ` ⚠ ${a}` }))
-  L({ cls: 'hr', text: BAR })
+  assumptions.forEach((a) => lines.push(rule(` ⚠ ${a}`, 'wn')))
+  lines.push(rule(BAR))
 
   return (
     <pre className="receipt" aria-label="回测汇总">
-      {lines.map((parts, i) => (
+      {lines.map((spans, i) => (
         <span key={i}>
-          {parts.map((p, j) =>
-            p.cls
-              ? <span key={j} className={p.cls}>{p.text}</span>
-              : <span key={j}>{p.text}</span>,
-          )}
+          {spans.map((s, j) => <span key={j} className={s.cls}>{s.text}</span>)}
           {i < lines.length - 1 ? '\n' : ''}
         </span>
       ))}

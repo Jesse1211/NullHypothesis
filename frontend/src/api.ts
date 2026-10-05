@@ -23,38 +23,34 @@ export class ApiFailure extends Error {
  *      只 mock reject 的 `catch` 往往处理不了它
  *   3. 非 2xx + JSON 错误体 —— 后端的结构化错误(ADR-031)
  */
+/** 三条失败路径都是「后端没按约定应答」,故同用 `NOT_FOUND`;
+ *  `value` 带上原始线索(异常文本或 content-type)供错误卡片显示。 */
+function unreachable(message: string, value: string): ApiFailure {
+  return new ApiFailure({ code: 'NOT_FOUND', message, detail: { value } })
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {
     res = await fetch(url, init)
   } catch (e) {
-    throw new ApiFailure({
-      code: 'NOT_FOUND',
-      message: `连不上后端(${url})——它起来了吗?`,
-      detail: { value: String(e) },
-    })
+    throw unreachable(`连不上后端(${url})——它起来了吗?`, String(e))
   }
 
   const ctype = res.headers.get('content-type') ?? ''
   if (!ctype.includes('application/json')) {
-    throw new ApiFailure({
-      code: 'NOT_FOUND',
-      message:
-        `后端返回的不是 JSON(HTTP ${res.status}, content-type: ${ctype || '空'})`
-        + ' —— 多半是代理指向了一个没在跑的后端。',
-      detail: { value: ctype },
-    })
+    throw unreachable(
+      `后端返回的不是 JSON(HTTP ${res.status}, content-type: ${ctype || '空'})`
+      + ' —— 多半是代理指向了一个没在跑的后端。',
+      ctype,
+    )
   }
 
   let body: unknown
   try {
     body = await res.json()
   } catch (e) {
-    throw new ApiFailure({
-      code: 'NOT_FOUND',
-      message: `后端返回的 JSON 解析失败(HTTP ${res.status})`,
-      detail: { value: String(e) },
-    })
+    throw unreachable(`后端返回的 JSON 解析失败(HTTP ${res.status})`, String(e))
   }
 
   if (!res.ok) {
@@ -68,19 +64,35 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
-export const listStrategies = () => request<string[]>('/api/strategies')
-export const listData = () => request<string[]>('/api/data')
-export const listRuns = () => request<RunListItem[]>('/api/runs')
-export const getRun = (id: string) => request<ArchivedRun>(`/api/runs/${id}`)
+export function listStrategies(): Promise<string[]> {
+  return request<string[]>('/api/strategies')
+}
 
-export const run = (body: {
+export function listData(): Promise<string[]> {
+  return request<string[]>('/api/data')
+}
+
+export function listRuns(): Promise<RunListItem[]> {
+  return request<RunListItem[]>('/api/runs')
+}
+
+export function getRun(id: string): Promise<ArchivedRun> {
+  return request<ArchivedRun>(`/api/runs/${encodeURIComponent(id)}`)
+}
+
+/** `POST /api/run` 的请求体 —— 字段名由 ADR-038 钉死,与 `RunRequestBody`
+ *  (pydantic)逐字对应,故用 snake_case。 */
+export interface RunRequest {
   strategies: string[]
   data_file: string
   cash: number
   fee: number
-}) =>
-  request<RunResponse>('/api/run', {
+}
+
+export function run(body: RunRequest): Promise<RunResponse> {
+  return request<RunResponse>('/api/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
+}

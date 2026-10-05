@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import traceback
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -69,6 +70,19 @@ def contracts() -> dict[str, Any]:
     return yaml.safe_load((ROOT / "contracts.yaml").read_text(encoding="utf-8"))
 
 
+def _run_json_name() -> str:
+    """归档清单的文件名 —— 取自 `contracts.yaml`,不写死。
+
+    原先一处读契约、三处硬编码 `"run.json"`,改契约时那三处会悄悄留在旧名上。
+    """
+    return str(contracts()["filenames"]["run_json"])
+
+
+def _read_json(path: Path) -> Any:
+    """归档 JSON 一律按 UTF-8 读 —— 策略名可以是中文,系统默认编码不可靠。"""
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 # ═══════════════════════ 校验器(T9)═══════════════════════
 #
 # 纯函数 —— T9 的门直接测它们,不依赖 T10/T11 的端点(那是跨任务顺序错误)。
@@ -86,28 +100,46 @@ def validate_run_id(s: Any) -> bool:
     return isinstance(s, str) and bool(_RUN_ID_RE.fullmatch(s))
 
 
+def _is_bare_filename(s: Any, suffix: str) -> bool:
+    """「单层、指定后缀结尾、不含路径分隔符与 `..`」—— **白名单**。
+
+    策略名与数据文件名是同一个形状,只有后缀不同。两份拷贝意味着往其中
+    一份加一条禁止字符时另一份会被漏掉,故收成一个。
+    """
+    if not isinstance(s, str) or not s.endswith(suffix):
+        return False
+    if "/" in s or "\\" in s or "\x00" in s or ".." in s:
+        return False
+    return s == Path(s).name and bool(s.strip())
+
+
 def validate_strategy_name(s: Any) -> bool:
     """I11:**只接受文件名**,绝不接受代码字符串。
 
     `GET /api/strategies` 返回的就是文件名,故这里只允许「单层、`.py` 结尾、
     不含路径分隔符与 `..`」的名字。
     """
-    if not isinstance(s, str) or not s.endswith(".py"):
-        return False
-    if "/" in s or "\\" in s or "\x00" in s or ".." in s:
-        return False
-    return s == Path(s).name and bool(s.strip())
+    return _is_bare_filename(s, ".py")
 
 
 def _validate_data_name(s: Any) -> bool:
-    if not isinstance(s, str) or not s.endswith(".csv"):
-        return False
-    if "/" in s or "\\" in s or "\x00" in s or ".." in s:
-        return False
-    return s == Path(s).name and bool(s.strip())
+    """同上,后缀换成 `.csv`(ADR-027:数据只读自 `data/*.csv`)。"""
+    return _is_bare_filename(s, ".csv")
 
 
 # ═══════════════════════ 错误(ADR-031)═══════════════════════
+
+
+def _format_cause(e: BaseException) -> str:
+    """策略内部那个异常的 traceback。
+
+    格式化的是 `__cause__`、不是 `e` 本身:用户要看的是自己策略里哪一行炸了,
+    而 `e` 的栈顶全是框架帧。无 cause(如策略返回了非法值)时为空串。
+    """
+    cause = e.__cause__
+    if cause is None:
+        return ""
+    return "".join(traceback.format_exception(type(cause), cause, cause.__traceback__))
 
 
 def _err(code: str, message: str, detail: dict[str, Any] | None = None,
@@ -216,9 +248,12 @@ def _run_payload(report, png_paths: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@app.post("/api/run")
-def post_run(body: RunRequestBody):
-    # I11:策略只能按文件名引用。代码串在这里就被挡下,**绝不**到达 exec 路径。
+def _reject_bad_names(body: RunRequestBody) -> JSONResponse | None:
+    """I11:策略只能按文件名引用。代码串在这里就被挡下,**绝不**到达 exec 路径。
+
+    必须**先于**存在性检查:`is_file()` 会拿着攻击者给的字符串去拼路径,
+    而这一步正是把那个字符串限制成单层文件名的那道闸。
+    """
     for s in body.strategies:
         if not validate_strategy_name(s):
             return _err("INVALID_REQUEST", f"策略名非法:{s!r}",
@@ -226,24 +261,57 @@ def post_run(body: RunRequestBody):
     if not _validate_data_name(body.data_file):
         return _err("INVALID_REQUEST", f"数据文件名非法:{body.data_file!r}",
                     {"field": "data_file", "value": body.data_file}, 422)
+    return None
 
+
+def _reject_missing_files(body: RunRequestBody) -> JSONResponse | None:
+    """名字合法但文件不在 → 404(不是 422:请求本身没问题)。"""
     for s in body.strategies:
         if not (STRATEGIES_DIR / s).is_file():
             return _err("NOT_FOUND", f"策略不存在:{s}", {"strategy": s}, 404)
     if not (DATA_DIR / body.data_file).is_file():
         return _err("NOT_FOUND", f"数据文件不存在:{body.data_file}",
                     {"data_file": body.data_file}, 404)
+    return None
 
+
+def _reject_bad_values(body: RunRequestBody) -> JSONResponse | None:
+    """取值约束 —— 都是 `INVALID_REQUEST`/422,故列成表而非 if 链。
+
+    每条仍带**各自**的 message 与 detail:错误体是给人读的,合并成一句
+    「参数不合法」会把「哪个参数、为什么」丢掉(ADR-031)。
+    """
     stems = [Path(s).stem for s in body.strategies]
-    if len(set(stems)) != len(stems):
-        return _err("INVALID_REQUEST", "策略 stem 重复 —— 输出文件名会互相覆盖",
-                    {"strategies": body.strategies}, 422)
-    if body.cash <= 0:
-        return _err("INVALID_REQUEST", f"cash 必须 > 0,收到 {body.cash}",
-                    {"field": "cash", "value": body.cash}, 422)
-    if not (0.0 <= body.fee < 0.1):
-        return _err("INVALID_REQUEST", f"fee 必须在 [0, 0.1) 内,收到 {body.fee}",
-                    {"field": "fee", "value": body.fee}, 422)
+    checks: list[tuple[bool, str, dict[str, Any]]] = [
+        (
+            len(set(stems)) != len(stems),
+            "策略 stem 重复 —— 输出文件名会互相覆盖",
+            {"strategies": body.strategies},
+        ),
+        (
+            body.cash <= 0,
+            f"cash 必须 > 0,收到 {body.cash}",
+            {"field": "cash", "value": body.cash},
+        ),
+        (
+            not (0.0 <= body.fee < 0.1),
+            f"fee 必须在 [0, 0.1) 内,收到 {body.fee}",
+            {"field": "fee", "value": body.fee},
+        ),
+    ]
+    for failed, message, detail in checks:
+        if failed:
+            return _err("INVALID_REQUEST", message, detail, 422)
+    return None
+
+
+@app.post("/api/run")
+def post_run(body: RunRequestBody):
+    # 顺序即安全边界:白名单 → 存在性 → 取值(见各函数的 docstring)。
+    for reject in (_reject_bad_names, _reject_missing_files, _reject_bad_values):
+        error = reject(body)
+        if error is not None:
+            return error
 
     try:
         return execute_run(body)
@@ -254,17 +322,11 @@ def post_run(body: RunRequestBody):
             "column": getattr(e, "column", None),
         })
     except StrategyError as e:
-        import traceback
-
-        tb = ""
-        if e.__cause__ is not None:
-            tb = "".join(traceback.format_exception(
-                type(e.__cause__), e.__cause__, e.__cause__.__traceback__))
         return _err("STRATEGY_ERROR", str(e), {
             "strategy": getattr(e, "strategy", None),
             "bar_index": getattr(e, "bar_index", None),
             "date": getattr(e, "date", None),
-            "traceback": tb,
+            "traceback": _format_cause(e),
         })
 
 
@@ -278,26 +340,28 @@ def _archives() -> list[Path]:
     """
     if not OUT_DIR.is_dir():
         return []
+    manifest = _run_json_name()
     return sorted(
         (d for d in OUT_DIR.iterdir()
-         if d.is_dir() and validate_run_id(d.name) and (d / "run.json").is_file()),
+         if d.is_dir() and validate_run_id(d.name) and (d / manifest).is_file()),
         key=lambda d: d.name, reverse=True,          # 最新优先
     )
 
 
 @app.get("/api/runs")
 def list_runs() -> list[dict[str, Any]]:
-    out = []
+    """列表口径由 ADR-038 钉死 —— 四个字段,不多不少。"""
+    items = []
     for d in _archives():
-        p = json.loads((d / "run.json").read_text(encoding="utf-8"))
-        out.append({
-            "run_id": p["run_id"],
-            "strategies": p["request"]["strategies"],
-            "data_file": p["request"]["data_file"],
+        archived = _read_json(d / _run_json_name())
+        items.append({
+            "run_id": archived["run_id"],
+            "strategies": archived["request"]["strategies"],
+            "data_file": archived["request"]["data_file"],
             # 多策略时取 results[0](即 --strategy 的第一条),ADR-038。
-            "final_equity": p["results"][0]["summary"]["final_equity"],
+            "final_equity": archived["results"][0]["summary"]["final_equity"],
         })
-    return out
+    return items
 
 
 @app.get("/api/runs/{run_id}")
@@ -309,10 +373,21 @@ def get_run(run_id: str):
     if not validate_run_id(run_id):
         return _err("INVALID_REQUEST", f"run_id 非法:{run_id!r}",
                     {"run_id": run_id}, 422)
-    path = OUT_DIR / run_id / "run.json"
+    path = OUT_DIR / run_id / _run_json_name()
     if not path.is_file():
         return _err("NOT_FOUND", f"找不到归档:{run_id}", {"run_id": run_id}, 404)
-    return json.loads(path.read_text(encoding="utf-8"))
+    return _read_json(path)
+
+
+def _declared_png_names(archived: dict[str, Any]) -> set[str]:
+    """该归档 `run.json` **声明过**的图名(只取文件名,丢掉目录部分)。
+
+    这就是 `name` 的白名单本体 —— 归档里躺着的可枚举事实,见 `get_run_png`
+    的 docstring 为何不用正则。
+    """
+    declared = [r.get("png_path") for r in archived.get("results", [])]
+    declared.append(archived.get("comparison_png_path"))
+    return {Path(p).name for p in declared if p}
 
 
 @app.get("/api/runs/{run_id}/png/{name}")
@@ -333,19 +408,11 @@ def get_run_png(run_id: str, name: str):
         return _err("INVALID_REQUEST", f"run_id 非法:{run_id!r}",
                     {"run_id": run_id}, 422)
 
-    meta = OUT_DIR / run_id / contracts()["filenames"]["run_json"]
+    meta = OUT_DIR / run_id / _run_json_name()
     if not meta.is_file():
         return _err("NOT_FOUND", f"找不到归档:{run_id}", {"run_id": run_id}, 404)
 
-    payload = json.loads(meta.read_text(encoding="utf-8"))
-    allowed = {
-        Path(p).name
-        for p in (
-            [r.get("png_path") for r in payload.get("results", [])]
-            + [payload.get("comparison_png_path")]
-        )
-        if p
-    }
+    allowed = _declared_png_names(_read_json(meta))
     if name not in allowed:
         # 不回显 `name` 的内容,只说它不在白名单里。
         return _err("NOT_FOUND", f"该归档没有这张图:{name}",

@@ -15,10 +15,8 @@ export interface ArchiveDetailProps {
 export default function ArchiveDetail({ run }: ArchiveDetailProps) {
   if (!run) {
     return (
-      <div className="emptybox" style={{ padding: '44px 20px' }}>
-        <div style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 6 }}>
-          选一次归档
-        </div>
+      <div className="emptybox big">
+        <div className="eh">选一次归档</div>
         <div>左边点一条,这里显示当时那次跑出来的曲线与汇总。</div>
       </div>
     )

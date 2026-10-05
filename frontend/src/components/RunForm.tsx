@@ -1,6 +1,6 @@
 /** T12 · 左栏表单(`rail`)。只接 props,不自己取数。 */
 
-import { SERIES_VARS } from './EquityChart'
+import { seriesColor } from './EquityChart'
 
 export interface RunFormProps {
   strategies: string[]
@@ -44,11 +44,6 @@ export function canRun(p: {
 // 恒加和恒不加都违反它,故 T12 的门用 21 项与 20 项双向断言。
 export const FILTER_THRESHOLD = 20
 
-function cssVar(name: string): string {
-  if (typeof getComputedStyle !== 'function') return '#2C7BCE'
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#2C7BCE'
-}
-
 export default function RunForm(props: RunFormProps) {
   const {
     strategies, dataFiles, selectedStrategies, dataFile, cash, fee,
@@ -76,7 +71,7 @@ export default function RunForm(props: RunFormProps) {
                   <label className={cls} key={s} data-k={s}>
                     <span
                       className="swatch"
-                      style={on ? { background: cssVar(SERIES_VARS[idx % SERIES_VARS.length]) } : undefined}
+                      style={on ? { background: seriesColor(idx) } : undefined}
                     />
                     <input
                       type="checkbox"

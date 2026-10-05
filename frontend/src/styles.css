@@ -322,6 +322,10 @@ td .tag .k { width: 3px; height: 12px; border-radius: 2px; }
   border: 1px dashed var(--line); border-radius: var(--r);
   padding: 16px 12px; text-align: center; font-size: 12px; color: var(--ink-3); line-height: 1.5;
 }
+/* 主栏的整页空态(「还没有结果」/「选一次归档」)—— 左栏那个小空态
+   不加 .big,两者只差留白。原先这两处各写一份 inline style。 */
+.emptybox.big { padding: 44px 20px; }
+.emptybox .eh { font-size: 13px; color: var(--ink-2); margin-bottom: 6px; }
 .archive-detail { margin-top: 2px; }
 .archive-detail figure { margin: 0 0 12px; }
 .archive-detail figcaption { font-family: var(--mono); font-size: 11px; color: var(--ink-3); margin-bottom: 5px; }
@@ -339,6 +343,7 @@ td .tag .k { width: 3px; height: 12px; border-radius: 2px; }
 }
 .errcard .msg { font-size: 13px; font-weight: 600; color: var(--ink); }
 .errcard .eb { padding: 11px 14px 13px; display: grid; gap: 7px; }
+.errcard .title { margin: 0; font-size: 12px; color: var(--ink-2); }
 .errcard dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; }
 .errcard dt { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
 .errcard dd { margin: 0; font-family: var(--mono); font-size: 12px; color: var(--ink); font-variant-numeric: tabular-nums; }

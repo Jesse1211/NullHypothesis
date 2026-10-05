@@ -83,12 +83,16 @@ export default function App() {
   }
 
   async function onRun() {
+    // `canRun` 已保证它非空(按钮此时才可点),但用守卫而不是 `as string`
+    // 断言 —— 断言是把「我确定」写给编译器,守卫是把它写给运行时。
+    if (dataFile === null) return
+
     setLoading(true)
     setRunError(null)
     try {
       const res = await apiClient.run({
         strategies: selectedStrategies,
-        data_file: dataFile as string,
+        data_file: dataFile,
         cash: Number(cash),
         fee: Number(fee),
       })
@@ -190,10 +194,8 @@ export default function App() {
               {/* 空态:请求成功但尚未运行。**不是白屏**。 */}
               {!runResult && !runError && resourcesLoaded && (
                 <section className="zone">
-                  <div className="emptybox" style={{ padding: '44px 20px' }}>
-                    <div style={{ fontSize: 13, color: 'var(--ink-2)', marginBottom: 6 }}>
-                      还没有结果
-                    </div>
+                  <div className="emptybox big">
+                    <div className="eh">还没有结果</div>
                     <div>
                       选一条策略和一份数据,然后点「跑」。<br />
                       策略读自 <code>strategies/</code>,数据读自 <code>data/</code>

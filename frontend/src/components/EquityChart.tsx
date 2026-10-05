@@ -14,14 +14,14 @@ import {
 } from 'recharts'
 import type { StrategyResult } from '../types'
 import { money, money0 } from '../format'
+import { cssVar } from '../theme'
 
 /** 与预览稿一致:第一条用 --accent,第二条用 --series-2。 */
 export const SERIES_VARS = ['--accent', '--series-2', '--ok', '--warn']
 
-function cssVar(name: string): string {
-  if (typeof getComputedStyle !== 'function') return '#2C7BCE'
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-  return v || '#2C7BCE'
+/** 第 i 条策略的颜色 —— 超过 SERIES_VARS 长度后循环复用。 */
+export function seriesColor(i: number): string {
+  return cssVar(SERIES_VARS[i % SERIES_VARS.length])
 }
 
 export interface EquityChartProps {
@@ -59,7 +59,9 @@ export default function EquityChart({ results, initialCash }: EquityChartProps) 
 
   if (results.length === 0) return null
 
-  const visible = results.filter((r) => !hidden[r.strategy])
+  const visible = results
+    .map((result, index) => ({ result, index }))
+    .filter(({ result }) => !hidden[result.strategy])
 
   // 多条策略共享同一组交易日(同一份 CSV),按 date 合并成一张宽表。
   // 这是**重排**,不是算术:每个 equity 值原样搬运。
@@ -93,7 +95,7 @@ export default function EquityChart({ results, initialCash }: EquityChartProps) 
             data-series={r.strategy}
             onClick={() => toggle(r.strategy)}
           >
-            <span className="k" style={{ background: cssVar(SERIES_VARS[i % SERIES_VARS.length]) }} />
+            <span className="k" style={{ background: seriesColor(i) }} />
             {r.strategy}
             {/* 末值读 summary.final_equity,不是 equity[len-1](ADR-025)。 */}
             <span className="val">{money0(r.summary.final_equity)}</span>
@@ -124,12 +126,14 @@ export default function EquityChart({ results, initialCash }: EquityChartProps) 
             />
             <Tooltip content={<Tip />} cursor={{ stroke: cssVar('--ink-2'), strokeOpacity: 0.55 }} />
             <Legend content={() => null} />
-            {visible.map((r) => (
+            {/* 颜色按**原始下标**取(filter 前就记下)—— 隐藏一条不会
+                让其余曲线换色,这也是不用 results.indexOf 的原因。 */}
+            {visible.map(({ result, index }) => (
               <Line
-                key={r.strategy}
+                key={result.strategy}
                 type="monotone"
-                dataKey={r.strategy}
-                stroke={cssVar(SERIES_VARS[results.indexOf(r) % SERIES_VARS.length])}
+                dataKey={result.strategy}
+                stroke={seriesColor(index)}
                 strokeWidth={1.6}
                 dot={false}
                 isAnimationActive={false}
