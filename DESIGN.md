@@ -2631,31 +2631,46 @@ max_drawdown_pct = abs(worst) * 100.0     # 符号翻转 → 正数幅度;abs �
 
 **验收门**(G 编号沿用设计期评审):
 1. `TEST_CMD` 全绿、`LINT_CMD` 干净
-2. **G1 买入成交价**:`Open=200.0, s=0.0005` → `price == 200.1`(精确相等)
-3. **G2 卖出成交价**:→ `price == 199.9`。**必须与 G1 成对** ——
+> **本节的全部期望值已落锁到 `contracts.yaml`**(J2 裁决,见上)——
+> 下列各门只写 key,**不复述数值**。两个 fixture:
+> `fixtures.adr057_slippage_affordability`(本任务新增)与
+> `fixtures.i7_four_distinct_prices`(ADR-056 加性更新了它的期望价)。
+> 两者均已进 `tests/test_design_binding.py::test_numeric_fixtures_are_not_restated`
+> 的覆盖清单,故此处任何一次复述都会让那条门变红。
+
+2. **G1 买入成交价**:`i7_open` + `slippage` → `price == expect_buy_price`(精确相等)
+3. **G2 卖出成交价**:→ `price == expect_sell_price`。**必须与 G1 成对** ——
    只测买入无法区分 `(1+s)` 与 `(1+dir·s)`
-4. **G3 手续费算在滑点后价格上**:`10 股, Open=200.0, s=0.0005, rate=0.001` → `fee == 2.001`,
-   **拒绝 `2.0`**(算在裸 `Open` 上)
-5. **G4 `Fill.amount` 继承滑点**:→ `amount == 2001.0`(否则前端成交额与现金变动对不上)
+4. **G3 手续费算在滑点后价格上**:`g3_shares` 股 + `i7_open` + `slippage` + `g3_fee_rate`
+   → `fee == expect_fee_on_slipped_price`,**拒绝 `reject_fee_on_raw_open`**(算在裸 `Open` 上)
+5. **G4 `Fill.amount` 继承滑点**:→ `amount == expect_amount_slipped`
+   (否则前端成交额与现金变动对不上)
 6. **G5 `s=0` 向后兼容**:7 个钉死 fixture 逐字不变
-   (`1847 / 3689 / 50 / 33 / 0 / 80 / 50`),且 `price == 200.0`;
-   `reject_divisor_change_half == 1844` 这条**反向门仍然有效**
-7. **G6 满仓 vs I1(ADR-057 的回归门)**:`cash=100000, Open=100.0, weight=1.0, rate=0.0, s=0.0005`
-   → **`shares == 999`**,`cash_after == 50.05`,**不抛错**。**拒绝 `1000`**(未修正时 → `−50.0` → 抛 I1)
-8. **G7 满仓 + 费率 + 滑点三者同时**:`rate=0.0013, s=0.0005` → `shares == 998`
-   (三个候选 `998/999/1000` 互异)
-9. **G8 ADR-014a 原夹具 + 滑点**:`Open=27.07, rate=0.0013, s=0.0005` → `cash_after >= 0`,不抛错
-10. **G9 往返总成本 == 2s + 2·rate**:`100 股, Open=100.0, s=0.0005, rate=0.001`,买→卖(同 `Open`)
-    → 净损 **`30.0`**,即名义 `10000` 的 `0.003`,**精确相等**。
+   (`fixtures.adr014a_affordability` / `adr016_fill_at_next_open` / `adr012_*` /
+   `adr014_denominator_three_way` 的既有期望值),且 `price == i7_four_distinct_prices.expect_fill_price`;
+   `adr014a_affordability.reject_divisor_change_half` 这条**反向门仍然有效**
+7. **G6 满仓 vs I1(ADR-057 的回归门)**:`cash` + `open` + `weight_full` + `fee_rate_zero` + `slippage`
+   → **`shares == expect_shares_slippage_only`**、`cash_after == expect_cash_after_slippage_only`,
+   **不抛错**。**拒绝 `reject_shares_unfixed`**(未修正时 `cash_after` 为
+   `reject_cash_after_unfixed` → 抛 I1)
+8. **G7 满仓 + 费率 + 滑点三者同时**:`fee_rate` + `slippage`
+   → `shares == expect_shares_fee_and_slippage`(三个候选值互异,由
+   `tests/test_contracts.py` 单独断言)
+9. **G8 ADR-014a 原夹具 + 滑点**:`adr014a_open` + `fee_rate` + `slippage`
+   → `cash_after >= 0`,不抛错
+10. **G9 往返总成本 == 2s + 2·rate**:`g9_shares` 股 + `g9_open` + `slippage` + `g9_fee_rate`,
+    买→卖(同 `Open`)→ 净损 `expect_roundtrip_net_loss`,**精确相等**。
     此门同时验证手续费复合与卖出符号
-11. **G10 卖出永不破 I1/I2**:任意 `s ∈ [0, 0.1)` 全平仓 → 不抛错、`shares == 0`、`cash` 单调增
-12. **G12 CLI 校验与 `--fee` 逐字对称**:`-0.1` / `0.1` / `nan` 报错,`0.0` 通过
-13. **G13 默认值**:不传 `--slippage` → `slippage == 0.0`,
+11. **G10 卖出永不破 I1/I2**:任意 `s ∈ [0, max_slippage_exclusive)` 全平仓
+    → 不抛错、`shares == 0`、`cash` 单调增
+12. **G12 CLI 校验与 `--fee` 逐字对称**:负值 / `max_slippage_exclusive` / `nan` 报错,
+    `default_slippage` 通过(上界是开区间,故该值本身非法)
+13. **G13 默认值**:不传 `--slippage` → `slippage == default_slippage`,
     且 `s=0` 的曲线与 ADR-049 的买入持有基准**逐点相同**
 14. **不引入 churn** —— 本门有两组,**缺第二组则抓不到被废弃的循环形式**:
     - (a) 持仓后次日 `Open` 升/降/平三种情形,断言差额均为 0
-    - (b) **`cash ≈ 0` 的持仓情形**(如持仓 999 股、`cash = 0.0`、`Open = 27.07`、`s = 0.0005`),
-      断言差额 **== 0**,**拒绝 −1**。
+    - (b) **`cash ≈ 0` 的持仓情形**(`churn_shares_held` / `churn_cash` / `churn_open` / `slippage`),
+      断言差额 == `expect_churn_delta`,**拒绝 `reject_churn_delta`**。
       *(必须有 (b):修正后 buy_and_hold 的常态是 `cash = 50.05`,那个余额**恰好掩盖** churn ——
       实测 (a) 的三种情形在**两种循环形式下都通过**。只有 `cash ≈ 0` 能区分它们)*
     - 两组都要断言**无买卖方向交替**(不得出现买→卖→买)
@@ -2666,11 +2681,27 @@ max_drawdown_pct = abs(worst) * 100.0     # 符号翻转 → 正数幅度;abs �
     **必须 rebase 并保留双方字段**,不得以本任务的版本整体覆盖。
     门:合并后 `RunRequest` 同时含 `slippage` 与(若 T20 已落地)`events`,
     且 `Summary` 的字段数不因本任务而减少
+18. **`api.py` 的 pydantic 模型与 `frontend/src/types.ts` 同步加入 `slippage`**
+    (ADR-038 的归属条款「谁引入谁负责」;与 T23 门 20 同形)——
+    否则新字段止步于后端,ADR-056 的机制 2(「每张图、每个 JSON 都自带
+    『这条曲线假设了多少成本』」)在 Web 界面上断掉,而那条机制正是 ADR-056
+    用来替代「非零默认值」的诚实性论证本身。
+    门:`ArchivedRun.request` 与 `api.ts` 的 `RunRequest` 两处 TS 类型
+    **逐字段镜像** `RunRequestBody`,且归档详情页与报告头并列显示滑点生效值。
+    *(本门是第二轮返工补的:T22 第一轮改了后端三处却漏了 TS 两处,而当时
+    前端唯一相关的门只断言 `types.ts` **存在**。故同时补上机械门 ——
+    `tests/test_layout.py::test_types_ts_mirrors_*` 从 pydantic 模型**导出**
+    期望字段集合,双向比对,人读交叉核对不再是这条契约的唯一保障)*
 
 **REAL_STACK_GATE(G11,最廉价最高价值的一道门)**:
 `buy_and_hold` + **真实 `data/synthetic.csv`** + `--slippage 0.0005` 跑完整 CLI。
-断言 ① **跑完不抛错**、② 首笔成交价 `== 27.313650`(`Open=27.30`)。
-**未修正的设计必定在此崩**(`shares=3663, cash=−49.90`)。
+断言 ① **跑完不抛错**、② 首笔成交价 == `expect_real_stack_fill_price`
+(`real_stack_open` 是真实 CSV 第 2 根 K 线的 `Open`)。
+**未修正的设计必定在此崩**(`reject_real_stack_shares_unfixed` 股 → `cash` 为负)。
+> ② 的**精确等式**须读未取整的 `Fill.price`:`trades.csv` 的 `price` 列按
+> ADR-038 的两位小数**显示**,在那上面断言精确等式结构上不可能成立。
+> 故这条门拆成两半 —— 子进程跑整条 CLI(证明不崩)+ 进程内在**同一条**真实
+> CSV 上读 `Fill.price`(证明那个价是精确的那个价)。
 `ma_cross` 同样跑一遍(它也走 `target(weight=1.0)`)。
 > `engine.py` 的注释自证:ADR-014a 的上一个 bug 正是被 T8 的 `--fee` **端到端**门抓到的。
 > 同一位置、同一手法。

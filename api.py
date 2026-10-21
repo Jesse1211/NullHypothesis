@@ -180,17 +180,27 @@ class RunRequestBody(BaseModel):
 
     `strategies` 是**文件名**列表,不是代码(I11)。
 
-    `events` 由 ADR-053(阶段三 / T20)追加 —— **可选,默认 `None`(无行为表)**。
-    按 ADR-038 的归属条款「谁引入谁负责」,本字段的 pydantic 模型与
-    `frontend/src/types.ts` 由 T20 更新。
+    `events` 由 ADR-053(阶段三 / T20)追加 —— **可选,默认 `None`(无行为表)**;
+    `slippage` 由 ADR-056(阶段三 / T22)追加 —— **可选,默认 `0.0`**。
+
+    按 ADR-038 的归属条款「谁引入谁负责」,新字段的 pydantic 模型与
+    `frontend/src/types.ts` 由引入它的任务各自更新(`events` 归 T20、
+    `slippage` 归 T22)。**本类是该契约的单一真相来源**,`types.ts` 逐字段
+    镜像它(DESIGN.md §ADR-038 / 「`pydantic` 模型在 `api.py` 中是单一真相
+    来源」)。镜像由 `tests/test_layout.py::test_types_ts_mirrors_*` 机械
+    保证 —— 在此加字段而不改 `types.ts` 会让那条门变红。
     """
 
     strategies: list[str] = Field(min_length=1)
     data_file: str
     cash: float = 100000.0
     fee: float = 0.0
-    # ── 以下字段由 ADR-053(阶段三)追加在末尾 ──
+    # ── 以下两个字段由 ADR-053 / ADR-056(阶段三)追加在末尾,**均可选** ──
+    # 既有字段的名称、类型、顺序逐字不变(ADR-038 的加性扩展条款);
+    # 两者都不传时响应与阶段二**逐点相同**。顺序依 ADR-044 的 `RunRequest`:
+    # `events` 在前、`slippage` 在后(T22 门 17 / T23 门 19 的「保留双方字段」)。
     events: str | None = None
+    slippage: float = 0.0
 
 
 def execute_run(body: RunRequestBody) -> dict[str, Any]:
@@ -217,13 +227,16 @@ def _execute_run_locked(body: RunRequestBody) -> dict[str, Any]:
         events=None if body.events is None else DATA_DIR / body.events,
     )
     paths = [STRATEGIES_DIR / s for s in body.strategies]
-    results = nh_run.run(paths, df, cash=body.cash, fee=body.fee)
+    results = nh_run.run(
+        paths, df, cash=body.cash, fee=body.fee, slippage=body.slippage
+    )
 
     run_id, out_dir = backtest.create_archive_dir(OUT_DIR)
     request = nh_run.RunRequest(
         strategies=list(body.strategies), data_file=body.data_file,
         cash=body.cash, fee=body.fee,
         events=body.events,                  # ADR-053,追加在末尾
+        slippage=body.slippage,              # ADR-056:生效值进报告头与 run.json
     )
     report = backtest.build_report(run_id, request, results)
 
@@ -326,6 +339,12 @@ def _reject_bad_values(body: RunRequestBody) -> JSONResponse | None:
             not (0.0 <= body.fee < 0.1),
             f"fee 必须在 [0, 0.1) 内,收到 {body.fee}",
             {"field": "fee", "value": body.fee},
+        ),
+        # ADR-056:与 `fee` **逐字对称**(同一个区间写法 ⇒ `nan` 同样被拒)。
+        (
+            not (0.0 <= body.slippage < 0.1),
+            f"slippage 必须在 [0, 0.1) 内,收到 {body.slippage}",
+            {"field": "slippage", "value": body.slippage},
         ),
     ]
     for failed, message, detail in checks:

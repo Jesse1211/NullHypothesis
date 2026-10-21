@@ -88,6 +88,14 @@ export interface ArchivedRun {
     fee: number
     /** ADR-053(阶段三 / T20)追加在末尾:行为表文件名,`null` = 无行为表。 */
     events?: string | null
+    /** ADR-056(阶段三 / T22)追加在末尾:滑点率,与 `fee` 同口径的小数
+     *  (`0.0005` = 5bps)。省略 = 阶段二的归档(当时还没有这个字段)。
+     *
+     *  **它必须镜像到这里,而不是止步于后端**:ADR-056 的机制 2
+     *  (「报告里显示生效值 —— 每张图、每个 JSON 都自带『这条曲线假设了
+     *  多少成本』」)是该 ADR 用来替代「非零默认值」的诚实性论证本身。
+     *  后端有、界面无,等于这条论证在 Web 界面上断掉。 */
+    slippage?: number
   }
   results: Array<{
     strategy: string

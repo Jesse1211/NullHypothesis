@@ -28,6 +28,13 @@ export default function ArchiveDetail({ run }: ArchiveDetailProps) {
         <span className="ztitle">{run.run_id}</span>
         <span className="zsub">
           {run.request.data_file} · 初始 {money(run.request.cash)} · 费率 {run.request.fee}
+          {/* ADR-056 机制 2:生效的滑点值必须**被显示**,与 `费率` 并列 ——
+              「诚实来自声明与可见性,不来自默认值的大小」。阶段二的归档没有
+              这个键(加性扩展),故 `undefined` 时整段不渲染,而**不是**显示
+              `0` —— 把「当年没记录」说成「当年滑点为零」是在替历史编数据。
+              直接取 JSON 字段、零算术(I8),与上面的 `费率` 同口径。 */}
+          {run.request.slippage !== undefined
+            && <> · 滑点 {run.request.slippage}</>}
         </span>
       </div>
 

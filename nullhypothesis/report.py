@@ -4,6 +4,10 @@
 重算、不得遍历 `Bar` 列表或 `Account`(ADR-044)。故这里只 import 值对象,
 不 import `engine.Backtest` 或 `account` 的任何符号。
 
+报告头含本次运行的**生效**交易成本参数(`fee` / `slippage`,ADR-056)——
+它们取自 `RunReport.request`,是**请求**的性质而非策略的性质,故按【运行】
+只渲染一次。
+
 屏幕文本是 JSON 的**格式化投影**:同一个数,屏幕上是 `+25.00%`,
 `summary.json` 里是裸标量 `25.0`。JSON 本身不含格式化字符串 —— 否则 T10 的
 逐字段对账与 T11 的递归相等永不可能通过。
@@ -77,6 +81,37 @@ def _gap_block(s: Summary) -> list[str]:
     ]
 
 
+def _cost_header(report: RunReport) -> list[str]:
+    """**报告头**:本次运行的**生效**交易成本参数(ADR-056 的第 2 条机制)。
+
+    `slippage` 与 `fee` **并列**(ADR-056 / T24 门 7):每张屏幕、每份
+    `summary.txt` 都自带「这条曲线假设了多少成本」。两者并列而非二选一 ——
+    `fee = 0` 在今天的美股零售是**现实的**(2019 年起主要券商普遍免佣),
+    `slippage = 0` **永远不现实**,故 ADR-056 的诚实性恰恰依赖这个值**被显示**
+    (「诚实来自声明与可见性,不来自默认值的大小」)。
+
+    **只渲染,不计算**(ADR-044):两个值直接取自 `report.request`,本模块
+    不做任何算术。数值格式引用 `contracts.yaml` 的 `formats.rate`,
+    本模块不复述格式字面量。
+
+    `fee` / `slippage` 不走 `format_field`:它们是 `RunRequest` 的字段而非
+    `Summary` 的字段,而 `field_formats` 的键集合被 `tests/test_contracts.py`
+    钉死为 `Summary` 的字段集 —— 把它们塞进去会破坏那条门。
+
+    两个**行标签**与 `_summary_block` 的「区间 / 交易日数 / 初始资金」同属
+    一类(本模块的行内字面量),不进 `contracts.yaml` 的 `frozen_text` ——
+    那里装的是**跨层复述**的文案(对账行、两条假设、单日提示),由
+    `tests/test_design_binding.py` 强制「DESIGN.md 只引用不复述」。把一个在
+    散文里不可避免会出现的词(「滑点率」)放进去会让那条门对**文档**误报。
+    """
+    c = contracts()
+    fmt = c["formats"]["rate"]
+    return [
+        f" 手续费率      {fmt.format(report.request.fee)}",
+        f" 滑点率        {fmt.format(report.request.slippage)}",
+    ]
+
+
 def _comparison_table(results: list[RunResult]) -> list[str]:
     """ADR-018:**只陈述数字,不排名、不评判。**
 
@@ -113,6 +148,9 @@ def _screen_text(report: RunReport) -> str:
     out.append(_THIN)
     # 跳空统计按【运行】只打一次 —— 它是数据的性质,不是策略的性质。
     out.extend(_gap_block(report.results[0].summary))
+
+    # 交易成本参数同样按【运行】只打一次 —— 它是**请求**的性质(ADR-056)。
+    out.extend(_cost_header(report))
 
     if len(report.results) > 1:
         out.append(_THIN)

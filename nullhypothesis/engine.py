@@ -52,19 +52,27 @@ T4 只拥有其中的「队列 + 成交」部分;主循环、`equity[]`/`trades[
     修改仓位语义而非修 bug(ADR-014a 的「为什么不改除数」逐字如此)。
 
   * **ADR-012** —— 目标股数 `floor`。算出 0 股则按 ADR-008 无声跳过。
-  * **ADR-014a**(2026-10-03 增补)—— **可负担性约束**。钉死的公式在
-    `weight ≈ 1` 且 `rate > 0` 时会超买并破坏 I1(实测 `cash=100000`、
+  * **ADR-014a**(2026-10-03 增补,**ADR-057 于阶段三修订单位成本**)——
+    **可负担性约束**。钉死的公式在 `weight ≈ 1` 且**存在任何单位级成本**
+    (`rate > 0` 或 ADR-056 的 `s > 0`)时会超买并破坏 I1(实测 `cash=100000`、
     `rate=0.0013`、`Open=27.07`、`weight=1.0` → 3694 股、`gross+fee =
-    100126.58`,超支 126.58)。故算出目标后**仅在超支时递减**:
+    100126.58`,超支 126.58)。故算出目标后**仅在超支时递减**
+    (DESIGN.md 的 ADR-014a 现行文本,逐字):
 
-        target = floor(w * investable / Open)
-        while target > 0 and target * Open * (1 + rate) > investable:
-            target -= 1
+        target = floor(w * investable / Open)        # 钉死的公式不变
+        while target > shares_held and (target - shares_held) * Open * (1 + s) * (1 + rate) > cash:
+            target -= 1                              # 只在【增量】真正买不起时生效
 
+    守卫是 `target > shares_held`、比较式对**差额**计费并与 **`cash`** 比 ——
+    **不是** `target > 0`、**不是** `target * unit_cost > investable`。后两者
+    合起来正是 ADR-014a 的第一版,而**那是个 bug**(见 `resolve_queue` 内的
+    长注与 ADR-057)。**ADR-057 的不变规则**:单位成本必须含**全部**单位级
+    成本(目前 `s` 与 `rate` 两项)。
     `weight = 0.5` 仍是 **1847**(与原公式完全一致,约束不触发);
-    `weight = 1.0` 是 **3689**。数值见 `contracts.yaml` 的
-    `fixtures.adr014a_affordability`。这恢复了 ADR-010/016 的「I1 不该靠
-    运气成立」「本方案下永不超买」,影响面最小。
+    `weight = 1.0`、`s = 0` 时是 **3689**。数值见 `contracts.yaml` 的
+    `fixtures.adr014a_affordability` 与 `fixtures.adr057_slippage_affordability`。
+    这恢复了 ADR-010/016 的「I1 不该靠运气成立」,影响面最小 ——
+    但**注意**:「永不超买」不再由 ADR-016 的 T+1 定价提供,**只由本循环提供**。
   * **ADR-008** —— 差额为 0 则**不生成订单、不报警、静默跳过**。幂等是引擎的
     责任。本模块在**两处**落实它:`enqueue` 之前(T5 读 `pending_intent` 后
     调 `enqueue_intent`,零差额的 `ShareOrder` 不入队)与 `resolve_queue` 内
@@ -91,7 +99,9 @@ T4 只拥有其中的「队列 + 成交」部分;主循环、`equity[]`/`trades[
 不变式(本模块守护的两条):
 
   * **I4** 队列长度 `<= 1`(ADR-041)—— 由 `enqueue` 的覆盖语义在构造上保证。
-  * **I7** 成交价 `== 成交日的 Open`(ADR-002)—— `resolve_queue` 只从传入的
+  * **I7′**(ADR-056 重写 I7)成交价 `== 成交日的 Open * (1 + dir * s)`,
+    `dir = +1` 买 / `-1` 卖;`s = 0` 时退化为原 I7 的 `== Open`
+    —— `resolve_queue` 只从传入的
     `bar` 读 `Open`,本模块**不持有** bar 列表,故结构上取不到别的价位。
 """
 
@@ -173,7 +183,7 @@ class Fill:
     * `date` —— `YYYY-MM-DD`(`contracts.yaml` 的 `formats.date`)
     * `side` —— `BUY` / `SELL`(`contracts.yaml` 的 `trade_sides`)
     * `shares` —— **恒为正**,方向由 `side` 承载(ADR-037)
-    * `price` —— 成交日的 `Open`(I7)
+    * `price` —— 成交日的 `Open * (1 + dir * s)`(I7′ / ADR-056)
     * `amount` —— `shares * price`,**不含手续费**(ADR-046)。由后端提供是
       因为 ADR-025 规定「乘、除、加、减一律在后端」,而批准稿的交易清单有
       「金额」列 —— 前端算 `shares × price` 会在 I8 上开口子
@@ -214,8 +224,12 @@ class Fill:
 class BarLike(Protocol):
     """`resolve_queue` 对 bar 的全部要求:`Open` 与 `Date`。
 
-    **只有 `Open`** —— 这是 I7(成交价 == 成交日的 Open)在类型层的投影:
-    本模块结构上拿不到 `Close`/`High`/`Low`,故「用错价位」的实现写不出来。
+    **只有 `Open`** —— 这是 I7′(成交价 == 成交日的 `Open * (1 + dir * s)`,
+    ADR-056)在类型层的投影:本模块结构上拿不到 `Close`/`High`/`Low`,故
+    「用错价位」的实现写不出来。滑点只调**那一个**价格,不引入第二个价格来源。
+
+    **不含 `Volume`** —— ADR-059 的诚实边界:固定 bps 滑点与订单规模无关,
+    框架结构上无从知晓规模。这是边界,不是待办。
     """
 
     @property
@@ -257,12 +271,16 @@ class Backtest:
     状态机,以免与 T5 追加的 `run()` 争同一个字段。
     """
 
-    def __init__(self, cash: float, fee: float = 0.0) -> None:
+    def __init__(self, cash: float, fee: float = 0.0, slippage: float = 0.0) -> None:
         """
         Args:
             cash: 初始资金,交给 `Account`(T3)守 I1。
             fee: 费率 `rate`(ADR-007,默认 `0.0`;ADR-039 要求 `rate >= 0`)。
                 注意是**费率**而不是每笔费用额 —— `fee = shares * price * rate`。
+            slippage: 滑点率 `s`(**ADR-056**,默认 `0.0`)。与 `fee` **同口径** ——
+                小数分数,`0.0005` 即 5bps(ADR-056 明文「不引入第二种单位」)。
+                买入按 `Open * (1 + s)` 成交、卖出按 `Open * (1 - s)`(I7′)。
+                `s = 0` 时逐点退化为原 I7,故本参数是**加性**的(§7 第 1 条)。
         """
         rate = float(fee)
         if not math.isfinite(rate):
@@ -273,6 +291,25 @@ class Backtest:
             # 第一笔成交才发现 —— 那时错误已经跑了一整轮构造。
             raise ValueError(f"fee(费率)不得为负(ADR-039 的 rate >= 0):实得 {rate}")
 
+        # ── ADR-056:滑点率,校验与 `fee` **逐字对称** ────────────────────
+        #
+        # 只守「有限 + 非负」两条 —— 上界 `< 0.1` 属 CLI/API 层,与 `fee` 一致
+        # (`Backtest(fee=0.5)` 也不被这里拒绝,拒绝它的是 `backtest._validate`
+        # 与 `api._reject_bad_values`)。把上界放进聚合根会让两层各有一份口径,
+        # 而 ADR-039 的参数表是那条口径的单一来源。
+        # 负滑点是「交易送钱」的另一种写法(买入价低于 Open、卖出价高于 Open),
+        # 它让净值曲线凭空增长,且在第一笔成交前无人发现 —— 与负费率同形。
+        slip = float(slippage)
+        if not math.isfinite(slip):
+            raise ValueError(
+                f"slippage(滑点率)必须是有限数(ADR-056):实得 {slippage!r}"
+            )
+        if slip < 0.0:
+            raise ValueError(
+                f"slippage(滑点率)不得为负(ADR-056,与 ADR-039 的 rate >= 0 对称):"
+                f"实得 {slip}"
+            )
+
         #: 账本 —— **聚合内部实体,不可被聚合外引用**(§1 的实体表逐字;
         #: ADR-044 重申 T6/T7 不得触及它)。故它是 `_account` 而**不是**公开
         #: 属性:公开它等于邀请聚合外的代码去读/改账本,而 §1 说 `Account`
@@ -282,6 +319,11 @@ class Backtest:
         #: 转发属性不破坏那个名字契约,§7 第 1 条允许加性变更)。
         self._account = Account(cash=cash)
         self.fee_rate = rate
+
+        #: 滑点率 `s`(ADR-056)。与 `fee_rate` 并列的**只读用**属性 ——
+        #: `resolve_queue` 是唯一的读者,它用 `1 + dir * s` 调成交价(I7′),
+        #: 并把同一个 `s` 乘进 ADR-057 的递减循环单位成本。
+        self.slippage = slip
 
         #: 订单队列(ADR-035 钉死的名字;T4 的门对它采样)。
         #:
@@ -396,9 +438,12 @@ class Backtest:
              `ShareOrder` → 差额就是 `shares` 本身(ADR-014)。
 
              除数是裸 `Open`,**不是** `Open * (1 + rate)` —— 改除数会让
-             每一笔 `rate > 0` 的目标成交漂移(ADR-014a 的「为什么不改除数」)。
-             ADR-014a 的递减循环只在 `target * Open * (1 + rate) > investable`
-             时转,故 `rate == 0`(ADR-007 默认值)时一次都不转。
+             每一笔 `rate > 0` 的目标成交漂移(ADR-014a 的「为什么不改除数」;
+             ADR-057 逐字重申:本修正**保留钉死的除数**)。
+             ADR-014a 的递减循环只在**增量**真正买不起时转
+             (`(target - shares_held) * unit_cost > cash`,`unit_cost` 含
+             `s` 与 `rate` 两项,ADR-057),故 `rate == 0` **且** `s == 0`
+             (两者的默认值)时一次都不转。
           4. **ADR-008**:差额为 0 → 返回 `None`。不报警、不记账、不产生
              `Fill`(故 ADR-042 的交易次数不会偏大)。订单已在第 1 步出队,
              按 ADR-041 被丢弃而非回退执行。
@@ -457,11 +502,17 @@ class Backtest:
 
             # ── ADR-014a:可负担性约束 —— 只在**真正买不起**时递减 ─────────
             #
-            # ADR-014a(2026-10-03 增补)逐字:
+            # ADR-014a(2026-10-03 增补,ADR-057 于阶段三修订单位成本)逐字:
             #
             #     target = floor(w * investable / Open)        # 钉死的公式不变
-            #     while target > 0 and target * Open * (1 + rate) > investable:
-            #         target -= 1                               # 只在真正买不起时生效
+            #     while target > shares_held and \
+            #           (target - shares_held) * Open * (1 + s) * (1 + rate) > cash:
+            #         target -= 1                               # 只在【增量】真正买不起时生效
+            #
+            # (**有意不引用 ADR-014a 的第一版** `while target > 0 and
+            #  target * unit_cost > investable` —— 那是个已修好的 bug,把它
+            #  留在注释里等于指示下一个读者去复活它。ADR-057 的警告框记明:
+            #  本 ADR 的初稿就是凭记忆引用了那个被废弃的形式。)
             #
             # 缺陷本身是真的:`cash=100000`、`rate=0.0013`、`Open=27.07`、
             # `weight=1.0` → `floor(100000/27.07) = 3694` 股、`gross+fee =
@@ -478,11 +529,15 @@ class Backtest:
             #    钉死为可分辨的两个值:`expect_shares_half == 1847` 与
             #    `reject_divisor_change_half == 1844`。)
             #
-            # 循环的两个守卫各有理由:`target > 0` 使它必然终止且不会递减到
-            # 负数(卖出侧的差额由 `target_shares - shares_held` 产生,不是
-            # 这里);`> investable` 用严格大于,故「恰好花光」(ADR-012 的
-            # `floor` 用尽余额是**设计预期**,见 `fixtures.adr012_floor_vs_ceil`)
-            # 不被误判成买不起。
+            # 循环的守卫与比较式各有理由(**按现行形式陈述**,下同):守卫
+            # `target_shares > shares_held` 使它必然终止,且不会递减到持仓量
+            # 以下 —— 卖出侧的差额由 `target_shares - shares_held` 自然产生,
+            # 不由这里递减得到;比较式对 `self._account.cash` 用**严格大于**,
+            # 故「恰好花光」(ADR-012 的 `floor` 用尽余额是**设计预期**,见
+            # `fixtures.adr012_floor_vs_ceil`)不被误判成买不起。
+            #   (本段原文按 `target > 0` 与 `> investable` 陈述 —— 那正是上面
+            #    刻意不引用的、已废弃的第一版形式。ADR-057 落地时一并更正:
+            #    注释若描述一个不存在的循环,读者会以它为准去「修」正确的代码。)
             #
             # 向后兼容:`rate == 0.0`(ADR-007 的默认值)时
             # `target * Open <= investable` 由 floor 本身保证,循环一次都不转
@@ -497,7 +552,33 @@ class Backtest:
             # K 线上**卖出 1 股**(差额 −1)然后来回倒腾。三个钉死 fixture 都
             # 从空仓起,故全部照常通过,缺陷只在持仓后出现。
             # (ADR-014a 的 2026-10-04 修正,由 T8 的 `--fee` 端到端门抓到。)
-            unit_cost = open_price * (1.0 + self.fee_rate)
+            # ── ADR-057(阶段三):单位成本必须含**全部**单位级成本 ─────────
+            #
+            # 本行原作 `open_price * (1.0 + self.fee_rate)`。ADR-056 把实际买入
+            # 价变成 `Open * (1 + s)`,于是旧式单位成本**按一个比实际便宜的价格
+            # 判断「买不起」**,放过实际买不起的股数,`Account.apply` 随即在 I1
+            # 上抛错。实测:`weight = 1.0` 下 **120 组参数里 87 组(72%)破 I1**,
+            # 且 `buy_and_hold` 在 `data/synthetic.csv` 上**首笔成交即崩**
+            # (`Open=27.30, s=0.0005` → 3663 股 → `cash = -49.90`)。
+            # 缺陷精确地只落在满仓上,而两个内置策略都走 `target(weight=1.0)`。
+            #
+            # **ADR-057 的不变规则(须记入账本)**:本循环的单位成本**必须含全部
+            # 单位级成本**(目前是 `s` 与 `rate` 两项)。下一个加进来的单位成本
+            # (如印花税)若漏掉,会**第三次**复活同一形状的超买 bug。
+            #
+            # 同时更正本块上文一句注释:ADR-014a 曾把 I1 的构造性保证归给
+            # 「ADR-016 的 T+1 才算股数」—— 滑点进来后那句话**第二次被证伪**。
+            # 满仓的可负担性**只能**靠这个递减循环守,T+1 定价本身不提供保证。
+            #
+            # **只改这一行赋值**(ADR-057 的构建期铁律,逐字):循环的守卫
+            # `target_shares > shares_held` 与比较式
+            # `(target_shares - shares_held) * unit_cost > cash` **一个字都不许动** ——
+            # 守卫改成 `target_shares > 0`、或比较式改成对**整个仓位**计费的
+            # `target_shares * unit_cost > investable`,都是已修好的 bug 的原形
+            # (后者就是 ADR-014a 的第一版:实测 1728 组参数里 443 组结果不同,
+            #  `(Open=27.07, s=0.0005, 持仓 999, cash=0)` 下它给差额 **−1** ——
+            #  凭空卖出一股然后来回倒腾 —— 而正确形式给 0)。
+            unit_cost = open_price * (1.0 + self.slippage) * (1.0 + self.fee_rate)
             while (
                 target_shares > shares_held
                 and (target_shares - shares_held) * unit_cost > self._account.cash
@@ -523,16 +604,34 @@ class Backtest:
         # 费率乘在**绝对**股数上,故卖出同样收费(ADR-043 的「双向均收取」)。
         fill_shares = abs(delta)
         side = BUY if delta > 0 else SELL
-        amount = fill_shares * open_price
+
+        # ── ADR-056:I7′ —— 滑点**调成交价**,不是额外扣一笔费 ────────────
+        #
+        #     price = Open * (1 + dir * s)      dir = +1 买 / -1 卖
+        #
+        # 天然双向惩罚:买贵、卖便宜。`dir` 从 `delta` 的符号来 —— 与 `side`
+        # 同一个来源,故「买按 +s、卖也按 +s」这种实现写不出来(那会让 G1/G2
+        # 这对门中的 G2 红)。`s = 0` 时 `price == open_price` **逐点**成立
+        # (`x * 1.0 == x` 在 IEEE-754 下精确),故默认行为一字未动。
+        direction = 1.0 if delta > 0 else -1.0
+        price = open_price * (1.0 + direction * self.slippage)
+
+        # ADR-056:**手续费算在滑点后的价格上** —— `fee = shares * price * rate`,
+        # `price` 为滑点后价。与真实券商一致:佣金按**成交金额**计。两项不重复
+        # 计费 —— 滑点是**价格**偏移,手续费是**金额**百分比,量纲与作用对象不同。
+        amount = fill_shares * price
         fee = amount * self.fee_rate
 
         fill = Fill(
             date=bar_date_str(bar.Date),
             side=side,
             shares=fill_shares,
-            # I7:成交价 == 成交日的 Open。本方法只有这一个价格来源。
-            price=open_price,
+            # I7′(ADR-056 重写 I7):成交价 == 成交日的 Open * (1 + dir * s)。
+            # 仍是**精确等式**,且本方法只有这一个价格来源(`BarLike` 只给 Open)。
+            price=price,
             # ADR-046:成交额,**不含手续费**。前端直接显示,不做乘法。
+            # 它自动继承滑点后价 —— 成交额本就该是**实际**成交额(ADR-056),
+            # 否则前端显示的成交额与现金变动对不上。
             amount=amount,
             fee=fee,
         )
