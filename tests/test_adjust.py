@@ -51,6 +51,7 @@ from nullhypothesis.data import (
     PRICE_COLUMNS,
     CorporateEvent,
     UnadjustedPriceWarning,
+    UnsortedDateWarning,
     cumfactors_from_events,
     load_csv,
     load_events,
@@ -449,6 +450,118 @@ def test_factor_really_comes_from_adj_close(tmp_path):
     raw_high, raw_low = 200.0 * 1.02, 200.0 * 0.98
     assert df["High"].iloc[0] == pytest.approx(raw_high * 0.5)
     assert df["Low"].iloc[0] == pytest.approx(raw_low * 0.5)
+
+
+def _write_prices_in_row_order(
+    tmp_path: Path,
+    bars: list[tuple[str, float]],
+    adj: list[float],
+    row_order: list[int],
+    name: str,
+) -> Path:
+    """与 `write_prices` 同形,但按 `row_order` 给出的**原始行号**写行。
+
+    `write_prices` 总是按 `bars` 的给定顺序落盘;本条门要的是**同一批行**
+    以乱序落盘,故单独写一个 writer,不去改动共用 helper(门 17 的加性保证:
+    既有内联 CSV 的断言一行都不许动)。
+    """
+    rows = [
+        f"{day},{c!r},{c * 1.02!r},{c * 0.98!r},{c!r},{a!r},1000"
+        for (day, c), a in zip(bars, adj)
+    ]
+    path = tmp_path / name
+    path.write_text(
+        "Date,Open,High,Low,Close,Adj Close,Volume\n"
+        + "".join(rows[i] + "\n" for i in row_order),
+        "utf-8",
+    )
+    assert path.is_file(), "fixture 必须真实落盘"
+    return path
+
+
+def test_adj_close_follows_the_same_sort_permutation(tmp_path):
+    """门 8 × ADR-019:**乱序 CSV 与 `Adj Close` 同时在场**时,输出必须与
+    手工排序版本**逐值相同**(DESIGN.md:1051「ADR-019 排序后等价」在因子
+    路径上的延伸;乱序是 ADR-019 明确**允许**的输入形态,见 DESIGN.md:373)。
+
+    为什么这条门是必要的:`Adj Close` 在排序**前**按原始行序读下来
+    (门 8① 要求它不出现在返回帧里,故它被单独拎成一个 Series),之后
+    `df` 被 `sort_values` 重排。两者必须跟着**同一个置换**走,否则因子会
+    配错 bar。而 `data.py` 里做这件事的那一行**本身不改变任何已有门的
+    结果** —— 把它删掉,既有全套测试仍全绿(实测 550 passed),因为既有的
+    乱序测试都没有 `Adj Close`,而既有的 `Adj Close` 测试都是有序的。
+    这条门把两者**交叉**起来。
+
+    fixture 的三条必要条件(缺一则测不出错配):
+      1. cumfactor 必须**逐根互不相同**(0.125 / 0.4 / 0.8 / 1.0)。
+         对称 fixture(如 0.5 / 0.5 / 1.0)实测两侧都是 [100, 100, 100],
+         置换后仍相等 —— **测不出**。
+      2. 断言必须落在**中间**各行上:后复权归一化让末行恒为 1.0
+         (ADR-050),错配在末行上**不可见**(实测错序列末位仍是 100.0)。
+      3. 首行不得是最早的日期,否则排序是恒等置换,无事可错。
+    """
+    F = C["fixtures"]["adr019_adj_close_follows_the_sort"]
+    days = ["2020-01-02", "2020-01-03", "2020-01-06", "2020-01-07"]
+    bars = list(zip(days, F["raw_closes"]))
+    adj = F["adj_closes"]
+    order = F["shuffled_row_order"]
+
+    # 前提自检:置换非恒等,且 cumfactor 逐根互不相同
+    assert order != sorted(order), "乱序 fixture 必须真的乱序"
+    assert len(set(F["cumfactors"])) == len(F["cumfactors"]), (
+        "cumfactor 必须逐根互不相同,否则排序错配不可见"
+    )
+    assert F["cumfactors"][-1] == 1.0, "后复权:末行 cumfactor 恒为 1.0"
+
+    sorted_csv = _write_prices_in_row_order(
+        tmp_path, bars, adj, list(range(len(bars))), "sorted.csv"
+    )
+    shuffled_csv = _write_prices_in_row_order(
+        tmp_path, bars, adj, order, "shuffled.csv"
+    )
+
+    with no_warnings():
+        warnings.simplefilter("ignore", UnsortedDateWarning)
+        hand_sorted = load_csv(sorted_csv)
+    with pytest.warns(UnsortedDateWarning):      # ADR-019:排序 + 提示,非错误
+        shuffled = load_csv(shuffled_csv)
+
+    # ① 乱序版 == 手工排序版,四列逐值相同(「排序后等价」的本体)
+    for column in PRICE_COLUMNS:
+        assert shuffled[column].tolist() == hand_sorted[column].tolist(), (
+            f"column={column}:乱序 CSV 必须与手工排序版逐值相同"
+        )
+    assert shuffled["Date"].tolist() == hand_sorted["Date"].tolist()
+    assert list(shuffled.index) == list(range(len(bars))), "index 必须是 0..n-1"
+    assert "Adj Close" not in shuffled.columns      # 门 8① 在乱序下同样成立
+
+    # ② 钉死**绝对值**,而非只钉两侧相等 —— 否则「两侧都错成同一个值」
+    #    的实现也能过。复权后收盘恒等于 Adj Close(这正是反解的定义)。
+    assert shuffled["Close"].tolist() == F["expect_adjusted_closes"]
+
+    # ③ 明确拒绝「漏掉置换重对齐」的实现读出的那条错序列(实测值)。
+    #    注意它的**末位仍是 100.0** —— 这就是为什么 ② / ③ 必须看中间各行。
+    reject = F["reject_adjusted_closes"]
+    assert shuffled["Close"].tolist() != reject
+    assert reject[-1] == F["expect_adjusted_closes"][-1], (
+        "错序列末位与正确值相同 —— 归一化会藏住末行的错配"
+    )
+    for i in range(len(bars) - 1):
+        assert shuffled["Close"].iloc[i] != pytest.approx(reject[i]), (
+            f"row={i}:读到了错配的因子"
+        )
+
+    # ④ 四列同乘同一个因子,在乱序下也成立(门 2 的不变量)
+    for i, cumfactor in enumerate(F["cumfactors"]):
+        raw_close = F["raw_closes"][i]
+        assert shuffled["Close"].iloc[i] == pytest.approx(raw_close * cumfactor)
+        assert shuffled["Open"].iloc[i] == pytest.approx(raw_close * cumfactor)
+        assert shuffled["High"].iloc[i] == pytest.approx(
+            raw_close * 1.02 * cumfactor
+        )
+        assert shuffled["Low"].iloc[i] == pytest.approx(
+            raw_close * 0.98 * cumfactor
+        )
 
 
 # ═══════════════════ 门 9 / 10:两路仲裁 ═══════════════════
