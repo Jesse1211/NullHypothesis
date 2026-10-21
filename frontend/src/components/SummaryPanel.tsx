@@ -9,7 +9,7 @@
  */
 
 import type { StrategyResult } from '../types'
-import { integer, money, orNull, percent, percentUnsigned } from '../format'
+import { integer, money, orNull, percent, percentUnsigned, ratio } from '../format'
 
 const BAR = '═'.repeat(43)
 const THIN = '─'.repeat(43)
@@ -90,6 +90,17 @@ export default function SummaryPanel({
         row('   总收益    ', percent(s.total_return_pct),
             s.total_return_pct >= 0 ? 'pos' : 'neg'),
         row('   交易次数  ', pad(integer(s.trade_count), 6)),
+        // ── ADR-058 的两个风险指标 ── 按【策略】显示:它们从 equity 算,
+        // 故是策略的性质,不是数据的性质(与跳空相反)。
+        //
+        // 夏普用 `ratio` —— **裸比率,不追加 `%`**。空值标记表示该值在
+        // 数学上**未定义**,不表示 0(ADR-059 的声明逐字覆盖这一点)。
+        row('   夏普比率  ', pad(ratio(s.sharpe), 6)),
+        // 回撤是**正数幅度**,用 percentUnsigned —— 带符号格式化器会引入
+        // 双重负号的显示 bug。前端**不取绝对值**:后端给的就是最终值。
+        row('   最大回撤  ', pad(percentUnsigned(s.max_drawdown_pct), 7), 'n',
+            { cls: 'hr',
+              text: `  ${orNull(s.max_drawdown_peak_date)} ~ ${orNull(s.max_drawdown_trough_date)}` }),
       )
     })
   } else {

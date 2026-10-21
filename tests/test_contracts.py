@@ -61,11 +61,64 @@ def test_mean_abs_gap_is_unsigned_and_total_return_is_signed(c):
     assert fmt.format(0.31) == "0.31%", "绝对值百分比不得带 + 号"
 
 
+def test_adr058_numeric_fixtures_are_really_numbers(c):
+    """YAML 1.1 的陷阱:`2.46e7` 解析成**字符串**,`2.46e+7` 才是浮点。
+
+    不门住这条,`t9b_reject_above` 会静默变成 `'1.0e4'`,于是
+    `abs(sharpe) <= FX['t9b_reject_above']` 在比较 float 与 str —— Python 3
+    会抛 TypeError,而写成 `==` 的断言则会永远为假/为真。
+    """
+    f = c["fixtures"]["adr058_metrics"]
+    for key in ("degenerate_eps", "t9b_reject_above", "t9b_cash"):
+        assert isinstance(f[key], float), (
+            f"adr058_metrics.{key} 不是浮点 —— 指数记法须带符号(1.0e+4)"
+        )
+    for i, v in enumerate(f["t9b_naive_sharpe"]):
+        assert isinstance(v, float), f"t9b_naive_sharpe[{i}] 不是浮点"
+    assert isinstance(f["annualization_factor"], int)
+    assert isinstance(f["t9b_shares"], int)
+
+
+def test_adr058_risk_metric_formats(c):
+    """ADR-058:`sharpe` 用 `ratio`、`max_drawdown_pct` 用 `percent_unsigned`。
+
+    两条都是**可证伪的**:
+    * `sharpe` **不可**复用 `percent_signed` —— 它会给裸比率附加一个 `%`;
+    * `max_drawdown_pct` 定为**正数幅度**,带符号格式化器会引入 `+`/`-`
+      双重负号的显示 bug(这正是 ADR-058 选正数约定时要避免的那个)。
+    """
+    ff = c["field_formats"]
+    assert ff["sharpe"] == "ratio"
+    assert ff["max_drawdown_pct"] == "percent_unsigned"
+    assert ff["max_drawdown_peak_date"] == "date"
+    assert ff["max_drawdown_trough_date"] == "date"
+
+    ratio = c["formats"][ff["sharpe"]]
+    assert ratio.format(1.2345) == "1.23"
+    assert "%" not in ratio, "sharpe 是裸比率,格式里不得含 %"
+
+    mdd = c["formats"][ff["max_drawdown_pct"]]
+    assert mdd.format(23.5) == "23.50%"
+    assert not mdd.format(23.5).startswith("+"), "正数幅度不得带 + 号"
+
+
+def test_adr058_rounding_covers_both_numeric_fields(c):
+    """两个数值字段进 `rounding.fields`,两个日期字段**不进**(不参与舍入)。"""
+    fields = c["rounding"]["fields"]
+    assert "sharpe" in fields
+    assert "max_drawdown_pct" in fields
+    assert "max_drawdown_peak_date" not in fields
+    assert "max_drawdown_trough_date" not in fields
+
+
 def test_every_summary_field_has_exactly_one_format(c):
     expected = {
         "start", "end", "bars", "initial_cash", "final_equity",
         "total_return_pct", "trade_count",
         "max_gap_pct", "max_gap_date", "mean_abs_gap_pct",
+        # ── ADR-058 追加的四个字段 ──
+        "sharpe", "max_drawdown_pct",
+        "max_drawdown_peak_date", "max_drawdown_trough_date",
     }
     assert set(c["field_formats"]) == expected
     for field, key in c["field_formats"].items():

@@ -57,6 +57,15 @@ SYMBOLS = [
     ("nullhypothesis.engine", "Fill"),
     ("nullhypothesis.run", "run"),
     ("nullhypothesis.run", "compute_gaps"),
+    # ADR-058 的两个指标函数 + 三个命名常量。T23 的门**直接 import 它们**,
+    # 故按 ADR-035 自检规则二必须钉死为模块级公开名 —— 与 compute_gaps
+    # (同一条规则下的先例)同处。
+    ("nullhypothesis.run", "compute_sharpe"),
+    ("nullhypothesis.run", "compute_max_drawdown"),
+    ("nullhypothesis.run", "SHARPE_DEGENERATE_EPS"),
+    ("nullhypothesis.run", "SHARPE_REPORTABLE_CEILING"),
+    ("nullhypothesis.run", "TRADING_DAYS_PER_YEAR"),
+    ("nullhypothesis.run", "RISK_FREE_RATE"),
     ("nullhypothesis.report", "render"),
     ("nullhypothesis.plot", "write"),
     ("nullhypothesis.errors", "DataValidationError"),

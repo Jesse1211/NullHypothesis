@@ -524,6 +524,19 @@ nullhypothesis/
                                #       fee: float) -> list[RunResult]      # T5,不校验 stem 唯一性
                                #   compute_gaps(df) -> list[float]
                                #     ADR-021 的跳空序列;长度 == 交易日数 - 1(T5 的门断言它)
+                               #   compute_sharpe(equity: Sequence[float]) -> float | None   # T23
+                               #     ADR-058 的夏普;对 equity 纯(不收 initial_cash)。
+                               #     退化三态按 ADR-058 的规范顺序返回 None
+                               #   compute_max_drawdown(equity: Sequence[float],
+                               #                        dates: Sequence) -> tuple[float, str|None, str|None]
+                               #     ADR-058 的最大回撤;返回 (pct, peak_date, trough_date)
+                               #   SHARPE_DEGENERATE_EPS / TRADING_DAYS_PER_YEAR / RISK_FREE_RATE
+                               #     ADR-058 的三个命名常量。T23 的门**直接 import 它们**,
+                               #     故按自检规则二必须钉死为模块级公开名(同 compute_gaps 的先例)
+                               #   SHARPE_REPORTABLE_CEILING: float | None     # ADR-058「处置」第 1 条
+                               #     绝对上限兜底的阈值。**取值是 OQ-17,设计期未决**,
+                               #     故现为 None(= 尚未裁决)且守卫惰性;机制已在
+                               #     compute_sharpe 内建成,落锁时只需填值
                                #   Backtest.queue -> list                  # 订单队列,T4 的门对它采样
                                #   Backtest.enqueue(order) -> None         # 入队;T4 的 push_count 打在这里
                                #   Backtest.resolve_queue(bar) -> Fill|None
@@ -2245,7 +2258,7 @@ max_drawdown_trough_date: str | None
 ```
 
 计算归 `run.py`(`Summary` 构建处),**不得**放 `report.py` —— ADR-044 规定它只渲染不计算。
-`contracts.yaml` 需新增 `formats.ratio: "{:.2f}"`(`sharpe` 既非金额/计数/百分比/日期,
+`contracts.yaml` 需新增 `formats.ratio`(`sharpe` 既非金额/计数/百分比/日期,
 无现成格式可复用;**不可**复用 `percent_signed`，它会附加 `%`)。
 
 #### 夏普
@@ -2321,6 +2334,32 @@ else:                                       sharpe = mean / sigma * sqrt(252)
 > 2. **补第四条门(T23 门 9b)**:`cash = 50.05, shares = 999` + 恒定比率价格,
 >    钉死期望输出。
 >
+> **构建期(T23)的落地状态 —— 机制与取值已拆开,勿读作「只做了一半」**:
+> 第 1 条的**机制**已建成(`run.py` 的 `SHARPE_REPORTABLE_CEILING` 命名常量
+> + `compute_sharpe` 的退化 ③,ADR-035 已钉死该符号);缺的**只有阈值取值**,
+> 而那是 **OQ-17**:设计期未决、**构建期不得自行选值**、须与 ADR-059 的封顶
+> 声明一并定稿。故常量取 `None` —— 这是「尚未裁决」的**显式编码**,
+> **不是**「无上限」这个决定;守卫在 `None` 时惰性,不改变任何既有输出。
+> 第 2 条的门已就位但**仍然红**(`xfail(strict=True)`),因为产品行为确实还
+> 不存在。
+>
+> **暴露面的实测边界(T23 实测;勿读作「用户可见」)**:该路径经
+> **纯函数 `compute_sharpe`** 可达 —— 直接喂 `equity = cash + shares*close`
+> (`cash=50.05, shares=999`,恒定比率)时裸算输出 `1e5 ~ 1e7` 量级的夏普。
+> 但**经真实 CLI 实测不可达**:ADR-002 的 T+1 语义**总会前置一根持现金的
+> 平盘 bar**,其收益率**精确等于 `0.0`**,注入一个真实的主导 σ。实测
+> `buy_and_hold` + 恒定比率 CSV(`p0 ∈ {27.30, 100, 1000}`、
+> `g ∈ {1e-5, 1e-3, 1e-2}`):夏普只按 **≈√n** 增长 —— `n=2520` 给 **796**、
+> `n=10000` 给 **1587**、`n=40000` 给 **3175**,在可表示的日期跨度内
+> **最高约 6e3,从未越过 `1e4`**。同一条 equity 去掉那根平盘 bar 后给
+> **6.3e7** —— 差距全部由它造成。
+>
+> 故 OQ-17 的依据是**纯函数层的暴露**(这已足以支撑「要不要封顶」的裁决),
+> **不是**一个用户可见的破口;账本不得把后者当作既成事实。
+> `tests/test_risk_metrics.py` 以两条门分守此事:一条守机制(真绿)、
+> 一条守行为(诚实的红),使「机制没写」与「阈值待裁决」在结果上可区分。
+> **关闭此项须由人裁决 OQ-17** —— 填值 + 摘 xfail + 补 ADR-059 声明,三者一并。
+>
 > **最大回撤不需要 epsilon**(实测 `[100*1.1**i]` 的回撤精确等于 `0.0`)——
 > 它是比较与 running-max,从不做近邻量相减。**不要对称地也加一个**,那是无意义的模仿。
 
@@ -2351,7 +2390,8 @@ max_drawdown_pct = abs(worst) * 100.0     # 符号翻转 → 正数幅度;abs �
 
 > **⚠️ 必须用 `abs(worst)`,不可写 `-worst`。** `worst` 初值 `0.0`,单调上涨/恒定净值时
 > 它从未被重新赋值,于是 `-worst` 得 **`-0.0`**:`json.dumps(-0.0)` 输出 `'-0.0'`,
-> `'{:.2f}'.format(-0.0)` 输出 `'-0.00'` —— 屏幕上出现 `-0.00%`。
+> 而按 `formats.ratio` / `formats.percent_unsigned` 格式化 `-0.0` 会输出
+> `'-0.00'` —— 屏幕上出现 `-0.00%`。
 > 这恰是本 ADR 选正数约定时要避免的「负号 + 带符号格式化器 → 双重负号」显示 bug。
 > 而且 **14 条 fixture 里有 4 条命中**(T3/T4/T5/T10),却**没有一条断言会红**:
 > `-0.0 == 0.0` 与 `-0.0 >= 0.0` 在 Python 里都为 `True`。
@@ -2718,16 +2758,18 @@ max_drawdown_pct = abs(worst) * 100.0     # 符号翻转 → 正数幅度;abs �
 
 **验收门**(T 编号沿用设计期规格,期望值均可手算):
 1. `TEST_CMD` 全绿、`LINT_CMD` 干净
-2. **T1** `[100,110,99,118.8]` → `sharpe == 6.93`、`max_drawdown_pct == 10.0`、peak=bar1、trough=bar2
+2. **T1** 序列 `t1_equity` → `sharpe` / `max_drawdown_pct` / peak / trough 四值均取
+   `fixtures.adr058_metrics.t1_*`(**此处不复述数值**)
 3. **T2** `[100,120,90,110,150]` → 峰 `120` 谷 `90` ⇒ `mdd` 为该峰谷跌幅、peak=bar1、trough=bar2、
-   `sharpe == 7.99`、`total_return_pct` 为 `100 → 150` 的涨幅。
+   `sharpe` 与 `total_return_pct` 取 `t2_sharpe` / `t2_total_return_pct`。
    *(期望值钉进 `contracts.yaml` 的 `fixtures.adr058_metrics.t2_*`,此处不复述数值 —— `contracts.yaml` 开头的「引用 key,不复述其值」规则,由 `tests/test_design_binding.py` 强制)*
 4. **T3 ⭐ 从不交易**(`Idle` 策略,净值恒 `100000`)→ `sharpe is None`、`mdd == 0.0`、
    两日期 `None`、`trade_count == 0`
-5. **T4 单调上涨** `[100,101,102,103]` → `mdd == 0.0`、**两日期 `None`**、`sharpe == 1603.25`
+5. **T4 单调上涨** 序列 `t4_equity` → `mdd` 取 `t4_max_drawdown_pct`、
+   **两日期 `None`**、`sharpe` 取 `t4_sharpe`
 6. **T5 2 行 CSV** `[100,105]` → `sharpe is None`(`len(r) < 2`)、`mdd == 0.0`、日期 `None`
-7. **T6 ⭐ `ddof` 判别门** `[100,110,121,108.9]` → `sharpe == 4.58`;
-   **`ddof=0` 会给 `5.61`** ⇒ 该门抓错约定
+7. **T6 ⭐ `ddof` 判别门** 序列 `t6_equity` → `sharpe` 取 `t6_sharpe`;
+   **`ddof=0` 会给 `t6_reject_sharpe_ddof0`** ⇒ 该门抓错约定
 8. **T7 ⭐ `sigma==0` 且 `mean≠0`** `[100,110,121,133.1]` → **`sharpe is None`**。
    守护 `1.2e16` bug。**必须断言 `is None`,不可只断言「不太大」**
 9. **T8 ⭐ 同比例大规模** `[1e6,1.1e6,1.21e6,1.331e6]` → `sharpe is None`。
@@ -2737,12 +2779,14 @@ max_drawdown_pct = abs(worst) * 100.0     # 符号翻转 → 正数幅度;abs �
    `equity = cash + shares × close` 使收益率**单调漂移**,σ 落在 `1e-10 ~ 1e-6`,
    **高出 `1e-12` 守卫三个数量级故不被抑制**,裸算会输出 `1e5 ~ 1e7` 量级的夏普。
    断言:按 OQ-17 的裁决输出(`None` 或封顶值),**拒绝任何 `> 1e4` 的裸值**
-10. **T9 round-trip** `[100,150,100]` → `sharpe == 2.24`(**非 `None` 非 `0.0`**)、
-    `mdd == 33.33`、peak=bar1、trough=bar2、`total_return_pct == 0.0`
+10. **T9 round-trip** 序列 `t9_equity` → `sharpe` 取 `t9_sharpe`(**非 `None` 非 `0.0`**)、
+    `mdd` 取 `t9_max_drawdown_pct`、peak / trough 取 `t9_peak_bar` / `t9_trough_bar`、
+    `total_return_pct` 取 `t9_total_return_pct`
 11. **T10 单行 CSV** → `sharpe is None`、`mdd == 0.0`、日期 `None`;并共同断言三个跳空字段仍 `None`
-12. **T11 两段回撤后者更深** `[100,90,100,80]` → `mdd == 20.0`、peak=bar0、trough=bar3
+12. **T11 两段回撤后者更深** 序列 `t11_equity` → `mdd` / peak / trough 取 `t11_*`
     ⇒ 门住「running max 未被重置」且取**最深**而非最早那段
-13. **T12 深度平手** `[100,90,100,90]` → `mdd == 10.0`、trough = **bar1**(较早)⇒ 门住严格 `<`
+13. **T12 深度平手** 序列 `t12_equity` → `mdd` / trough 取 `t12_*`(trough 为**较早**那个)
+    ⇒ 门住严格 `<`
 14. **T13 契约/JSON**:四键均在 `summary.json` 且为裸标量;`None` → `null` → 屏幕按 `formats.null_display` 显示;
     **任何位置不得出现 `NaN` / `Infinity`**(非合法 JSON)
 15. **通用不变式**(所有 fixture):`max_drawdown_pct >= 0.0` 恒成立;

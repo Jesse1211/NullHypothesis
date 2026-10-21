@@ -16,6 +16,7 @@ import EquityChart from '../components/EquityChart'
 import ErrorCard from '../components/ErrorCard'
 import HistoryList from '../components/HistoryList'
 import ArchiveDetail from '../components/ArchiveDetail'
+import { NULL_DISPLAY } from '../format'
 
 const BASE = fixture as unknown as RunResponse
 
@@ -385,5 +386,83 @@ describe('ADR-032 历史', () => {
     const { container } = render(<ArchiveDetail run={archived} />)
     const text = container.textContent ?? ''
     for (const a of BASE.assumptions) expect(text).toContain(a)
+  })
+})
+
+// ═══════════ T23 门 20 · ADR-058 的风险指标到达界面(I8 仍成立)═══════════
+//
+// mock 以契约 fixture 为基底,只覆写要测的字段 —— 键集合不变。
+
+describe('ADR-058 风险指标的渲染', () => {
+  /** 四个字段都与「前端能自己算出来的」故意不自洽。 */
+  function riskMock(over: Partial<StrategyResult['summary']> = {}): StrategyResult {
+    const r = clone(BASE.results[0])
+    r.summary.sharpe = 1.234
+    r.summary.max_drawdown_pct = 23.456
+    r.summary.max_drawdown_peak_date = '2020-02-19'
+    r.summary.max_drawdown_trough_date = '2020-03-23'
+    Object.assign(r.summary, over)
+    return r
+  }
+
+  it('夏普显示为裸比率,【不带 %】也不带 + 号', () => {
+    render(<SummaryPanel results={[riskMock()]} assumptions={[]} />)
+    const v = field('夏普比率')
+    expect(v).toBe('1.23')
+    expect(v).not.toContain('%')
+    expect(v).not.toContain('+')
+  })
+
+  it('最大回撤显示为正数幅度,【不带正负号】且带 %', () => {
+    render(<SummaryPanel results={[riskMock()]} assumptions={[]} />)
+    const v = field('最大回撤')
+    // 只取【数值段】断言符号 —— 后面的日期里本就含 `-`(2020-02-19),
+    // 对整行 grep `-23` 会把日期误判成负号。
+    const num = v.split(/\s+/)[0]
+    expect(num).toBe('23.46%')
+    expect(num.startsWith('+')).toBe(false)
+    expect(num.startsWith('-')).toBe(false)
+  })
+
+  it('峰值日与谷底日都显示在回撤那一行', () => {
+    render(<SummaryPanel results={[riskMock()]} assumptions={[]} />)
+    const v = field('最大回撤')
+    expect(v).toContain('2020-02-19')
+    expect(v).toContain('2020-03-23')
+  })
+
+  it('夏普为 null 时显示空值标记,【不是 0.00】', () => {
+    render(<SummaryPanel results={[riskMock({ sharpe: null })]} assumptions={[]} />)
+    const v = field('夏普比率')
+    expect(v).toBe(NULL_DISPLAY)
+    // null 表示数学上未定义,**不表示 0**(ADR-058/059)
+    expect(v).not.toBe('0.00')
+    expect(v).not.toContain('0.00')
+  })
+
+  it('无回撤时两个日期都显示空值标记,不显示 undefined', () => {
+    render(<SummaryPanel results={[riskMock({
+      max_drawdown_pct: 0,
+      max_drawdown_peak_date: null,
+      max_drawdown_trough_date: null,
+    })]} assumptions={[]} />)
+    const v = field('最大回撤')
+    expect(v).toContain('0.00%')
+    expect(v).not.toContain('undefined')
+    expect(v).not.toContain('null')
+  })
+
+  it('⭐ 回撤为 -0.0 时屏幕上【绝不】出现 -0.00%', () => {
+    // 后端用 abs() 故不会给 -0.0,但前端也不得把它渲染成双重负号。
+    render(<SummaryPanel results={[riskMock({ max_drawdown_pct: -0 })]} assumptions={[]} />)
+    expect(receiptText()).not.toContain('-0.00%')
+  })
+
+  it('I8:显示后端给的夏普,不是前端从 equity 重算的值', () => {
+    const r = riskMock({ sharpe: 99.99 })
+    // equity 数组仍是 fixture 的真实曲线,其真夏普远不是 99.99
+    expect(r.equity.length).toBeGreaterThan(2)
+    render(<SummaryPanel results={[r]} assumptions={[]} />)
+    expect(field('夏普比率')).toBe('99.99')
   })
 })

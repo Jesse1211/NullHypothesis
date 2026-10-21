@@ -32,6 +32,9 @@ formats:
   # 不是 Summary 的字段,而 field_formats 的键集合被 test_contracts.py
   # 钉死为 Summary 的字段集。
   rate:             "{:.4f}"       # 0.0005 = 5bps
+  # ADR-058:`sharpe` 既非金额/计数/百分比/日期,无现成格式可复用。
+  # **不可**复用 `percent_signed` —— 它会给裸比率附加一个 `%`。
+  ratio:            "{:.2f}"       # 1.23               裸比率,不带单位
 
 # 每个 summary 字段用哪种格式 —— 这是 ADR-021 自相矛盾的根源,现在只有一处
 field_formats:
@@ -45,6 +48,11 @@ field_formats:
   max_gap_pct:       percent_signed     # 有方向:-8.42%
   max_gap_date:      date
   mean_abs_gap_pct:  percent_unsigned   # 绝对值均值恒 >= 0,不带 +
+  # ── ADR-058 的四个字段 ──
+  sharpe:                    ratio              # 裸比率,不乘 100、不加 %
+  max_drawdown_pct:          percent_unsigned   # 正数表跌幅,不带 +(同 mean_abs_gap_pct)
+  max_drawdown_peak_date:    date
+  max_drawdown_trough_date:  date
 
 # ──────────────────────────── 冻结的文案 ────────────────────────────
 frozen_text:
@@ -81,7 +89,10 @@ api_error_codes: ["DATA_VALIDATION", "STRATEGY_ERROR", "INVALID_REQUEST", "NOT_F
 # ───────────────────────────── 数值精度 ─────────────────────────────
 rounding:
   decimals: 2
-  fields: [final_equity, initial_cash, total_return_pct, max_gap_pct, mean_abs_gap_pct]
+  # ADR-058 的 sharpe 与 max_drawdown_pct 由 T23 加入该集合;
+  # 两个回撤日期字段**不参与舍入**。
+  fields: [final_equity, initial_cash, total_return_pct, max_gap_pct, mean_abs_gap_pct,
+           sharpe, max_drawdown_pct]
 
 # ──────────────────── 阈值(T21 / ADR-051 · 052 · 054)────────────────────
 # 为什么阈值在这里而不是写成 `data.py` 的裸字面量:T21 门 12 的原话
@@ -306,6 +317,99 @@ fixtures:
     # 上界与校验口径,与 --fee 逐字对称(ADR-039 的参数表)
     max_slippage_exclusive: 0.1
     default_slippage: 0.0
+  # ADR-058:夏普 + 最大回撤。J2 裁决 —— 设计期(§15 T23)的推导数值钉在这里,
+  # 测试**只引用 key、不复述字面量**。每一项都已手工重算核验。
+  #
+  # 夏普 = mean(r) / std(r, ddof=1) × √252,r 为简单收益且**从 equity 算**;
+  # 回撤 = running-max(含当前点)下的最深跌幅,正数表跌幅,平手取较早。
+  adr058_metrics:
+    annualization_factor: 252         # ADR-058 硬编码,绑死日线
+    risk_free_rate: 0.0               # rf=0,不加 CLI 参数;偏差已声明(ADR-059)
+    degenerate_eps: 1.0e-12           # SHARPE_DEGENERATE_EPS,命名常量(负指数本就合法)
+
+    # T1 一次 -10% 回撤后反弹
+    t1_equity: [100.0, 110.0, 99.0, 118.8]
+    t1_sharpe: 6.93
+    t1_max_drawdown_pct: 10.0
+    t1_peak_bar: 1
+    t1_trough_bar: 2
+
+    # T2 峰 120 谷 90
+    t2_equity: [100.0, 120.0, 90.0, 110.0, 150.0]
+    t2_sharpe: 7.99
+    t2_max_drawdown_pct: 25.0         # 90/120 - 1 = -25%
+    t2_peak_bar: 1
+    t2_trough_bar: 2
+    t2_total_return_pct: 50.0         # 100 -> 150
+
+    # T3 从不交易(Idle),净值恒定 —— 夏普是 0/0,**未定义**故 None
+    t3_sharpe: null
+    t3_max_drawdown_pct: 0.0
+    t3_trade_count: 0
+
+    # T4 单调上涨 —— 回撤 0.0 但两日期 None(给日期等于断言发生过回撤)
+    t4_equity: [100.0, 101.0, 102.0, 103.0]
+    t4_sharpe: 1603.25
+    t4_max_drawdown_pct: 0.0
+
+    # T5 2 行 CSV —— len(r) < 2,短路不调用 std
+    t5_equity: [100.0, 105.0]
+    t5_sharpe: null
+    t5_max_drawdown_pct: 0.0
+
+    # T6 ⭐ ddof 判别门 —— 这一条是「刻意指定」与「随手调 np.std」的分界
+    t6_equity: [100.0, 110.0, 121.0, 108.9]
+    t6_sharpe: 4.58                   # ddof=1(ADR-058 钉死)
+    t6_reject_sharpe_ddof0: 5.61      # 错误实现:np.std 的默认值
+
+    # T7 ⭐ sigma != 0 但为浮点噪声(1.28e-16)—— 裸算会给 1.2e16
+    t7_equity: [100.0, 110.0, 121.0, 133.1]
+    t7_sharpe: null
+    t7_sigma_is_exactly_zero: false   # 故 `sigma == 0` 的判定式抓不到它
+
+    # T8 ⭐ 与 T7 同比例、起点 1e6 —— sigma 恰为 0.0,证明规则**与规模无关**
+    t8_equity: [1000000.0, 1100000.0, 1210000.0, 1331000.0]
+    t8_sharpe: null
+    t8_sigma_is_exactly_zero: true
+
+    # T9b ⭐ 持仓余现金(ADR-057 修正后 weight=1.0 的常态)+ 恒定比率价格。
+    # cash 是固定**加项**,使 r_k 单调漂移而非恒定,于是 σ 是一个**真实的**
+    # (微观)现金拖累信号 —— 高出 1e-12 守卫三个数量级故**不被抑制**。
+    # 期望输出待 OQ-17 裁决(None 或封顶值);当前只能断言「拒绝裸值」。
+    t9b_cash: 50.05
+    t9b_shares: 999
+    t9b_growth_rates: [0.001, 0.001, 0.01]
+    t9b_bars: [5, 252, 252]
+    # **指数必须带符号**(`2.46e+7` 而非 `2.46e7`):YAML 1.1 把后者解析成
+    # **字符串**而不是浮点,于是引用它的断言会静默比较 str 与 float。
+    t9b_naive_sharpe: [2.46e+7, 4.94e+5, 1.25e+5]   # 裸算输出,**均不可上报**
+    t9b_reject_above: 1.0e+4                      # 任何 > 1e4 的裸值都不可接受
+
+    # T9 round-trip:总收益 0 而夏普为正 —— 算术平均的波动拖累效应
+    t9_equity: [100.0, 150.0, 100.0]
+    t9_sharpe: 2.24                   # 非 None 非 0.0
+    t9_max_drawdown_pct: 33.33
+    t9_peak_bar: 1
+    t9_trough_bar: 2
+    t9_total_return_pct: 0.0
+
+    # T11 两段回撤,后者更深 ⇒ 门住「running max 未被重置」
+    t11_equity: [100.0, 90.0, 100.0, 80.0]
+    t11_max_drawdown_pct: 20.0
+    t11_peak_bar: 0
+    t11_trough_bar: 3
+
+    # T12 深度平手 ⇒ 门住严格 `<`(取较早的谷底 bar1,不是 bar3)
+    t12_equity: [100.0, 90.0, 100.0, 90.0]
+    t12_max_drawdown_pct: 10.0
+    t12_peak_bar: 0
+    t12_trough_bar: 1
+
+    # 通用不变式:回撤恒 >= 0 **且符号位为正** ——
+    # 只断言 >= 0.0 抓不到 -0.0(它 == 0.0 且 >= 0.0 均为真),
+    # 但 summary.json 会带 '-0.0'、屏幕会显示 '-0.00%'
+    reject_negative_zero_repr: "-0.0"
+    forbidden_json_tokens: ["NaN", "Infinity", "-Infinity"]
 
   # OQ-08 的阈值,双向可证伪
   oq08_search_box_threshold:

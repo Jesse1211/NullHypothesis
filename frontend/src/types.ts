@@ -37,6 +37,21 @@ export interface Summary {
   max_gap_pct: number | null
   max_gap_date: string | null
   mean_abs_gap_pct: number | null
+  /** 夏普比率(ADR-058)。**裸比率,不是百分数** —— 按 `formats.ratio`
+   *  渲染,前端**不得**给它追加 `%`。
+   *
+   *  `null` 表示该值在**数学上未定义**(策略不交易、或收益无波动、或样本
+   *  不足 2 个收益)—— **不表示 0**。按 `NULL_DISPLAY` 渲染,且界面不得
+   *  把它当 0 参与任何比较或排序(ADR-059 的声明逐字覆盖这一点)。 */
+  sharpe: number | null
+  /** 最大回撤(ADR-058)。**正数表跌幅**、已乘 100(`23.5` == 跌 23.5%)。
+   *  按 `percent_unsigned` 渲染 —— 带符号格式化器会引入双重负号的显示 bug。
+   *  前端**不取绝对值、不取负**:后端给的就是最终值。 */
+  max_drawdown_pct: number | null
+  /** 回撤的峰值日 / 谷底日。无回撤时**均为 `null`** —— 给日期等于断言发生过
+   *  一次没发生的回撤。**不含恢复日**(ADR-058 明确不做)。 */
+  max_drawdown_peak_date: string | null
+  max_drawdown_trough_date: string | null
 }
 
 export interface StrategyResult {
