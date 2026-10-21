@@ -40,6 +40,15 @@ MODULES = [
 
 SYMBOLS = [
     ("nullhypothesis.data", "load_csv"),
+    # ── 阶段三(ADR-053 / T20、ADR-050·051·052 / T21)加性追加 ──
+    # 这几个名字已进 ADR-035 的模块清单,故也进这张可执行投影:
+    # §4.5 自检规则二 —— 门要采样的内部序列必须是模块级公开名,
+    # 否则实现者内联它,门就结构上无法执行。
+    ("nullhypothesis.data", "load_events"),                # ADR-053
+    ("nullhypothesis.data", "CorporateEvent"),             # ADR-053
+    ("nullhypothesis.data", "cumfactors_from_events"),     # T21 门 4/9/10 采样它
+    ("nullhypothesis.data", "cumfactors_from_adj_close"),  # ADR-052 路径一
+    ("nullhypothesis.data", "UnadjustedPriceWarning"),     # ADR-051 的体检通道
     ("nullhypothesis.strategy", "Strategy"),
     ("nullhypothesis.strategy", "load_strategy"),
     ("nullhypothesis.account", "Account"),

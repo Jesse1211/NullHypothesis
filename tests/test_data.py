@@ -286,11 +286,34 @@ def test_single_row_csv_loads(tmp_path: Path) -> None:
     assert df.iloc[0]["Close"] == 104.0
 
 
-# ───────────────────────── ADR-004:不读 Adj Close ─────────────────────────
+# ══════════════ ADR-004 的三条老门 —— 已按 ADR-050 **反写** ══════════════
+#
+# **ADR-004 由 ADR-050 全部作废。** 这三条门原先断言「该列不被读取、
+# 加不加结果相同、该列的 NaN/负值对校验不可见」—— ADR-050 之后它们会把
+# **正确**的新行为判为失败(T21 门 16 要求反写它们)。
+#
+# 反写的方向逐条对应 ADR-050 的裁决表:
+#   * 主张 A(列为 `Date,Open,High,Low,Close[,Volume]`)**保留**
+#     → 「该列不出现在返回帧里」这一半**仍然断言**;
+#   * 主张 B/C(框架内无复权机制 / 修正只能在框架外)**被推翻**
+#     → 「不影响任何计算」反写为「**确实**由它算出因子并调整了价格」。
+#
+# 这不是把门改松:新门比老门**更严** —— 老门只要求「别读」,
+# 新门要求「读了、算对了、且算出的因子作用在四列上」。
 
 
-def test_adj_close_column_is_not_read(tmp_path: Path) -> None:
-    """ADR-004:CSV 含 `Adj Close` 时该列不被读取、不影响任何计算。"""
+def test_adj_close_is_absent_from_the_returned_frame(tmp_path: Path) -> None:
+    """**反写第一条**(T21 门 8①)。ADR-001 主张 A 的残留部分**仍然有效**:
+    `Adj Close` **不出现**在返回的 DataFrame 里。
+
+    这一半没有被 ADR-050 推翻,理由是结构性的:该列是**复权价**,
+    `Open/High/Low/Close` 是**未复权原始价**,两列不在同一个价格体系里。
+    让它留在表里等于给下游一个把两种单位混用的机会。
+
+    本 fixture 的 `Adj Close/Close` 比值**逐行恒为 0.5** —— 归一化后
+    累积因子处处为 `1.0`,故价格**恰好**不变。它同时门住了一件事:
+    「一个常数比例的 `Adj Close`(即区间内无任何事件)**不得**改动价格」。
+    """
     path = write_csv(
         tmp_path,
         "Date,Open,High,Low,Close,Adj Close,Volume\n"
@@ -299,19 +322,26 @@ def test_adj_close_column_is_not_read(tmp_path: Path) -> None:
     )
     df = load_csv(path)
 
-    # 该列根本不在返回的表里 —— 下游结构上无法读到它
+    # 该列不在返回的表里 —— 下游结构上无法读到它(ADR-001 主张 A)
     assert "Adj Close" not in df.columns
     assert list(df.columns) == ["Date", "Open", "High", "Low", "Close", "Volume"]
-    # OHLC 逐值等于 CSV 原值,未被 Adj Close 影响
+    # 比值恒定(区间内无事件)→ 因子恒为 1.0 → OHLC 逐值等于 CSV 原值
     assert df["Close"].tolist() == [104.0, 107.0]
     assert df["Open"].tolist() == [100.0, 104.0]
 
 
-def test_adj_close_does_not_change_result(tmp_path: Path) -> None:
-    """同一份数据加/不加 `Adj Close` → 载入结果完全相同。
+def test_adj_close_does_change_the_result(tmp_path: Path) -> None:
+    """**反写第二条**(T21 门 8②)—— 老门断言「加/不加结果相同」,
+    ADR-050 把那条主张(B/C)**推翻**了:现在必须**不同**。
 
-    这是 ADR-004「不影响任何计算」的直接断言:若实现读了该列(哪怕只是
-    留在表里让下游误用),两张表就不会相等。
+    这条门是「先读取用于算因子,再从返回帧中移除」那个**顺序**的唯一
+    可执行投影:`data.py` 原先的 `EXCLUDED_COLUMNS` 是**读取前就 drop**
+    (注释自述「先丢弃再校验…结构上不可能影响结果」)——
+    **若实现保留了 drop-before-read,本断言必红**。
+
+    `Adj Close/Close` 取 `1.0/104` 与 `2.0/107`(比值**非**常数)→
+    归一化后首行累积因子 != 1.0,故首行价格**必须**被调整,
+    而**末行**逐值等于原值(后复权,ADR-050)。
     """
     without = write_csv(
         tmp_path,
@@ -327,13 +357,38 @@ def test_adj_close_does_not_change_result(tmp_path: Path) -> None:
         "2020-01-03,104.0,108.0,103.0,107.0,2.0\n",
         name="with_adj.csv",
     )
-    pd.testing.assert_frame_equal(load_csv(without), load_csv(with_adj))
+    plain, adjusted = load_csv(without), load_csv(with_adj)
+
+    # 形状与列名不变 —— 下游无从分辨(ADR-050 的结构性保证)
+    assert list(plain.columns) == list(adjusted.columns)
+    assert len(plain) == len(adjusted)
+
+    # **但价格不再相同** —— 这正是 ADR-050 推翻主张 B/C 的可观测形式
+    assert adjusted["Close"].tolist() != plain["Close"].tolist()
+
+    # 因子确实由该列算出:factor_t = AdjClose_t/Close_t,按末行归一化
+    f0 = (1.0 / 104.0) / (2.0 / 107.0)
+    assert adjusted["Close"].iloc[0] == pytest.approx(104.0 * f0)
+    assert adjusted["Open"].iloc[0] == pytest.approx(100.0 * f0)
+    assert adjusted["High"].iloc[0] == pytest.approx(105.0 * f0)
+    assert adjusted["Low"].iloc[0] == pytest.approx(99.0 * f0)
+
+    # 后复权:**末行**逐值等于 CSV 原值(cumfactor == 1.0)
+    assert adjusted["Close"].iloc[-1] == pytest.approx(107.0)
+    assert adjusted["Open"].iloc[-1] == pytest.approx(104.0)
 
 
-def test_adj_close_garbage_is_ignored(tmp_path: Path) -> None:
-    """`Adj Close` 里的 NaN / 负值不得触发 ADR-019 的校验失败。
+def test_adj_close_garbage_falls_back_to_no_adjustment(tmp_path: Path) -> None:
+    """**反写第三条**。老门断言「该列的 NaN/负值对校验不可见」——
+    它是 ADR-004「先 drop 再校验」的直接推论,而那个顺序已被 ADR-050 改掉。
 
-    它不是 OHLC,ADR-004 说它不被读取 —— 所以它的内容对校验也不可见。
+    反写后的断言与 ADR-050 一致,且**仍不报错**:该列**不是** OHLC,
+    ADR-019 的 NaN/非正校验只作用在 `PRICE_COLUMNS` 上(那一条没变)。
+    一列废数据不该让一份本来能跑的价格文件跑不起来(§7 第 1 条的加性原则)
+    —— 故路径一判定为「不可用」并**退化为缺席**,价格不被调整。
+
+    这与 ADR-052 的表一致:路径一缺席且无行为表 → 不调价 + 跳空体检。
+    本 fixture 的两根 bar 跳空为 `104→104` 的 0%,故**不触发**体检提示。
     """
     path = write_csv(
         tmp_path,
@@ -342,8 +397,12 @@ def test_adj_close_garbage_is_ignored(tmp_path: Path) -> None:
         "2020-01-03,104.0,108.0,103.0,107.0,-999.0\n",
     )
     df = load_csv(path)
+
     assert len(df) == 2
     assert "Adj Close" not in df.columns
+    # 废数据 → 路径一不可用 → 不调价(价格逐值等于 CSV 原值)
+    assert df["Close"].tolist() == [104.0, 107.0]
+    assert df["Open"].tolist() == [100.0, 104.0]
 
 
 # ───────────────────────── 其他载入期失败 ─────────────────────────
