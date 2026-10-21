@@ -510,6 +510,19 @@ nullhypothesis/
                                #       fee: float) -> list[RunResult]      # T5,不校验 stem 唯一性
                                #   compute_gaps(df) -> list[float]
                                #     ADR-021 的跳空序列;长度 == 交易日数 - 1(T5 的门断言它)
+                               #   compute_sharpe(equity: Sequence[float]) -> float | None   # T23
+                               #     ADR-058 的夏普;对 equity 纯(不收 initial_cash)。
+                               #     退化三态按 ADR-058 的规范顺序返回 None
+                               #   compute_max_drawdown(equity: Sequence[float],
+                               #                        dates: Sequence) -> tuple[float, str|None, str|None]
+                               #     ADR-058 的最大回撤;返回 (pct, peak_date, trough_date)
+                               #   SHARPE_DEGENERATE_EPS / TRADING_DAYS_PER_YEAR / RISK_FREE_RATE
+                               #     ADR-058 的三个命名常量。T23 的门**直接 import 它们**,
+                               #     故按自检规则二必须钉死为模块级公开名(同 compute_gaps 的先例)
+                               #   SHARPE_REPORTABLE_CEILING: float | None     # ADR-058「处置」第 1 条
+                               #     绝对上限兜底的阈值。**取值是 OQ-17,设计期未决**,
+                               #     故现为 None(= 尚未裁决)且守卫惰性;机制已在
+                               #     compute_sharpe 内建成,落锁时只需填值
                                #   Backtest.queue -> list                  # 订单队列,T4 的门对它采样
                                #   Backtest.enqueue(order) -> None         # 入队;T4 的 push_count 打在这里
                                #   Backtest.resolve_queue(bar) -> Fill|None
@@ -2299,6 +2312,19 @@ else:                                       sharpe = mean / sigma * sqrt(252)
 >    不交给构建期裁决)。它关闭的是**整个类别**,而非一个实例。
 > 2. **补第四条门(T23 门 9b)**:`cash = 50.05, shares = 999` + 恒定比率价格,
 >    钉死期望输出。
+>
+> **构建期(T23)的落地状态 —— 机制与取值已拆开,勿读作「只做了一半」**:
+> 第 1 条的**机制**已建成(`run.py` 的 `SHARPE_REPORTABLE_CEILING` 命名常量
+> + `compute_sharpe` 的退化 ③,ADR-035 已钉死该符号);缺的**只有阈值取值**,
+> 而那是 **OQ-17**:设计期未决、**构建期不得自行选值**、须与 ADR-059 的封顶
+> 声明一并定稿。故常量取 `None` —— 这是「尚未裁决」的**显式编码**,
+> **不是**「无上限」这个决定;守卫在 `None` 时惰性,不改变任何既有输出。
+> 第 2 条的门已就位但**仍然红**(`xfail(strict=True)`),因为产品行为确实还
+> 不存在。**T23 已实测该路径经真实 CLI 可达**(`buy_and_hold` + 恒定比率 CSV
+> → 屏幕与 `summary.json` 都出现远超 `1e4` 的夏普),故这是一个**用户可见**
+> 的缺口。`tests/test_risk_metrics.py` 以两条门分守此事:一条守机制(真绿)、
+> 一条守行为(诚实的红),使「机制没写」与「阈值待裁决」在结果上可区分。
+> **关闭此项须由人裁决 OQ-17** —— 填值 + 摘 xfail + 补 ADR-059 声明,三者一并。
 >
 > **最大回撤不需要 epsilon**(实测 `[100*1.1**i]` 的回撤精确等于 `0.0`)——
 > 它是比较与 running-max,从不做近邻量相减。**不要对称地也加一个**,那是无意义的模仿。
