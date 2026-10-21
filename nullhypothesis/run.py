@@ -44,6 +44,7 @@ __all__ = [
     "run",
     "ROUNDING_DECIMALS",
     "SHARPE_DEGENERATE_EPS",
+    "SHARPE_REPORTABLE_CEILING",
     "TRADING_DAYS_PER_YEAR",
     "RISK_FREE_RATE",
 ]
@@ -80,6 +81,28 @@ TRADING_DAYS_PER_YEAR = 252
 # 就是错的(2010 年代 ≈ 0.2% vs 2023 ≈ 5%),给错比不给更危险 —— 它看
 # 起来精确。偏差方向已知(夏普偏高)且由 ADR-059 公开声明。
 RISK_FREE_RATE = 0.0
+
+# ADR-058「处置(两条都要)」第 1 条的**绝对上限兜底**:
+#   `abs(sharpe) > SHARPE_REPORTABLE_CEILING` → `None`
+# 它关闭的是**整个类别**(一切「大到不值得上报」的夏普),而非一个实例 ——
+# `SHARPE_DEGENERATE_EPS` 只拦浮点噪声,拦不住 ADR-058 实测反例那一类:
+# 持仓余现金(`shares=999, cash=50.05`,即 ADR-057 修正后 `weight=1.0` 的
+# **常态**)配恒定比率价格时,`cash` 是固定加项使收益率**单调漂移**,σ 落在
+# 1e-10 ~ 1e-6 —— 高出 1e-12 守卫三个数量级,故**不被抑制**,裸算输出
+# 1e5 ~ 1e7 量级的夏普。本任务已实测该路径经真实 CLI(`buy_and_hold` +
+# 恒定比率 CSV)可达,会打到屏幕并落进 `summary.json`。
+#
+# ⚠️ **取值是 OQ-17,设计期【未决】,且 DESIGN.md §14 明文规定
+#    「构建期不得自行选值」**(须与 ADR-059 的封顶声明一并定稿 ——
+#    封顶本身也是一种偏差)。故这里**只建成机制、不填数值**:
+#    `None` 是「尚未裁决」的显式编码,**不是**「无上限」这个决定。
+#    守卫在 `None` 时惰性(见 `compute_sharpe` 末段),行为与 OQ-17 落锁前
+#    完全一致 —— 本常量不改变任何现有输出。
+#
+# OQ-17 落锁后要做的**全部**工作:把下面的 `None` 换成裁决出的数值
+# (ADR-058 建议 `100`),并摘掉 T23 门 9b 的 xfail 标记
+# (`strict=True` 会因「意外通过」自动迫使这一步)。
+SHARPE_REPORTABLE_CEILING: float | None = None
 
 
 # ═════════════════════════ 值对象(ADR-044)═════════════════════════
@@ -269,7 +292,11 @@ def compute_sharpe(equity: Sequence[float]) -> float | None:
        退化(`ddof=1` 给 `nan`、`ddof=0` 给 `0/0`)。
     2. `sigma <= SHARPE_DEGENERATE_EPS * max(1.0, abs(mean))` → `None`。
        `max(1.0, ·)` 使 `mean == 0` 时判定式仍然成立。
-    3. 否则给真实数字。
+    3. `abs(sharpe) > SHARPE_REPORTABLE_CEILING` → `None`(ADR-058「处置」
+       第 1 条的绝对上限兜底)。**上限取值是 OQ-17,设计期未决且构建期
+       不得自行选值**,故该常量现为 `None` 且本级守卫惰性 —— 机制在位、
+       数值待裁决。见 `SHARPE_REPORTABLE_CEILING` 的注释与 T23 门 9b。
+    4. 否则给真实数字。
 
     `sigma == 0 且 mean != 0` → `None` 而不是 `+inf`:无限夏普字面为真
     (无风险套利)但无操作价值,只能来自合成数据。
@@ -307,7 +334,19 @@ def compute_sharpe(equity: Sequence[float]) -> float | None:
 
     # rf = 0 故分子就是 mean(r) 本身 —— 常量显式参与,使「rf 去哪了」可读。
     excess = mean - RISK_FREE_RATE
-    return excess / sigma * math.sqrt(TRADING_DAYS_PER_YEAR)
+    sharpe = excess / sigma * math.sqrt(TRADING_DAYS_PER_YEAR)
+
+    # ── 退化 ③ ── ADR-058「处置」第 1 条:绝对上限兜底。
+    # 取值是 OQ-17,设计期未决且**构建期不得自行选值**,故常量现为 `None`、
+    # 本守卫**惰性**(不改变任何现有输出)。机制已就位:OQ-17 落锁时只需给
+    # `SHARPE_REPORTABLE_CEILING` 填上裁决值,无需再碰这里的逻辑。
+    if (
+        SHARPE_REPORTABLE_CEILING is not None
+        and abs(sharpe) > SHARPE_REPORTABLE_CEILING
+    ):
+        return None
+
+    return sharpe
 
 
 def _fmean(xs: Sequence[float]) -> float:

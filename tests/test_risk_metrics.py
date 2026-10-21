@@ -221,11 +221,14 @@ def test_t8_same_ratio_at_large_scale_is_also_suppressed():
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "OQ-17【设计期未决】:绝对上限兜底 SHARPE_REPORTABLE_CEILING 的取值"
-        "(以及是否同时发警告)须与 ADR-059 的诚实声明一并定稿,"
-        "且 DESIGN.md §14 明文规定【构建期不得自行选值】。"
-        "断言逐字保留且仍在运行;strict=True 使 OQ-17 落锁后本门会因"
-        "【意外通过】而变红,迫使这个标记被摘掉。见 T23 的 needs-human 上报。"
+        "OQ-17【设计期未决】:绝对上限兜底的**机制**已按 ADR-058「处置」第 1 条"
+        "建成(`SHARPE_REPORTABLE_CEILING` + `compute_sharpe` 内的退化 ③),"
+        "但**阈值取值**须与 ADR-059 的封顶声明一并定稿,"
+        "且 DESIGN.md §14 明文规定【构建期不得自行选值】,"
+        "故常量现为 `None`(= 尚未裁决)、守卫惰性,本门仍然红。"
+        "断言逐字保留且仍在运行;strict=True 使 OQ-17 落锁(给常量填值)后"
+        "本门会因【意外通过】而变红,迫使这个标记被摘掉。"
+        "见 T23 的 needs-human 上报。"
     ),
 )
 @pytest.mark.parametrize("idx", range(3))
@@ -238,12 +241,22 @@ def test_t9b_cash_alongside_shares_is_not_reported_as_a_huge_sharpe(idx):
     σ 是一个**真实的**(微观)现金拖累信号 —— 落在 1e-10 ~ 1e-6,
     **高出 `1e-12` 守卫三个数量级故不被抑制**,裸算输出 1e5 ~ 1e7。
 
-    **本门目前以 `xfail(strict=True)` 形式存在,因为它的期望值取决于
-    OQ-17,而 OQ-17 在设计期【未决】且构建期【不得自行选值】。**
-    这不是为了让门变绿而弱化断言:断言本身(「拒绝任何 > 1e4 的裸值」)
-    **逐字保留**且仍在运行 —— `strict=True` 意味着一旦 OQ-17 落锁、
-    `SHARPE_REPORTABLE_CEILING` 实现到位,本门会因**意外通过**而变红,
-    迫使这个 xfail 标记被摘掉。详见本任务上报的 needs-human 结论。
+    **ADR-058「处置(两条都要)」的拆分状态(重要,勿读作「只做了一半」):**
+    第 1 条的**机制**已建成 —— `SHARPE_REPORTABLE_CEILING` 是模块级命名常量
+    (ADR-035 已钉死),`compute_sharpe` 的退化 ③ 已实现
+    `abs(sharpe) > ceiling → None`。缺的**只有阈值取值**,而那是 OQ-17:
+    设计期【未决】,DESIGN.md §14 明文规定【构建期不得自行选值】,
+    且须与 ADR-059 的封顶声明一并定稿(封顶本身也是一种偏差)。
+    常量故为 `None` = 「尚未裁决」的显式编码,**不是**「无上限」这个决定;
+    守卫在 `None` 时惰性,于是本门**仍然红** —— 这是诚实的红,
+    它说的正是「这条产品行为尚不存在」。
+
+    **本门以 `xfail(strict=True)` 形式存在,不是为了让门变绿而弱化断言:**
+    断言本身(「拒绝任何 > 1e4 的裸值」)**逐字保留**且仍在运行 ——
+    `strict=True` 意味着一旦 OQ-17 落锁(给常量填上裁决值),本门会因
+    **意外通过**而变红,迫使这个标记被摘掉。详见本任务上报的 needs-human
+    结论:该路径已实测经真实 CLI 可达(`buy_and_hold` + 恒定比率 CSV),
+    故这是一个**用户可见**的缺口,须由人裁决 OQ-17 后方可彻底关闭。
     """
     g = FX["t9b_growth_rates"][idx]
     n = FX["t9b_bars"][idx]
@@ -512,6 +525,39 @@ def test_gate16_eps_is_a_named_constant():
     assert "SHARPE_DEGENERATE_EPS = " in src
     # 判定式必须**引用常量**而不是内联字面量
     assert "SHARPE_DEGENERATE_EPS * max(" in src
+
+
+def test_adr058_disposition_1_mechanism_exists_and_awaits_oq17():
+    """ADR-058「处置(两条都要)」第 1 条:绝对上限兜底的**机制**必须在位。
+
+    这条门守的是一个**结构性**保证,与门 9b 分工明确:
+      * 门 9b 守**行为**(「> 1e4 的裸值不可上报」)—— 它取决于 OQ-17 的
+        阈值裁决,故目前是诚实的 xfail;
+      * 本门守**机制**(常量 + 守卫**存在**且守卫**引用该常量**)——
+        它不取决于阈值取多少,故现在就能是真绿。
+
+    为什么必须分成两条:若只有门 9b,那么「机制根本没写」与「机制写了但
+    阈值待裁决」在测试结果上**无法区分**(两者都是同一个 xfail)。本门
+    使前者变红、后者变绿 —— 于是机制一旦被谁删掉就会立刻暴露。
+
+    `SHARPE_REPORTABLE_CEILING is None` 是「OQ-17 尚未裁决」的显式编码,
+    **不是**「无上限」这个决定(后者属于构建期不得做的裁决)。
+    """
+    from nullhypothesis.run import SHARPE_REPORTABLE_CEILING
+
+    src = (ROOT / "nullhypothesis" / "run.py").read_text(encoding="utf-8")
+
+    # ① 常量是模块级命名常量(与 EPS 同等地位,不是魔法数字)
+    assert "SHARPE_REPORTABLE_CEILING" in src
+    # ② 守卫存在,且**引用常量**而非内联任何字面阈值
+    assert "abs(sharpe) > SHARPE_REPORTABLE_CEILING" in src
+    # ③ 当前状态:未裁决 ⇒ 守卫惰性 ⇒ 不改变任何既有输出。
+    #    OQ-17 落锁后这一行会红,迫使同时复核门 9b 的 xfail 标记。
+    assert SHARPE_REPORTABLE_CEILING is None, (
+        "OQ-17 已被裁决?那么:① 摘掉门 9b 的 xfail(strict=True 已会强制);"
+        "② 按 OQ-17 的要求补上 ADR-059 的封顶声明(封顶也是一种偏差);"
+        "③ 更新本断言。构建期**不得**自行给这个常量选值。"
+    )
 
 
 def test_gate17_ddof_one_is_written_literally():
