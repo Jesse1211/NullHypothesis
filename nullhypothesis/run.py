@@ -39,8 +39,13 @@ __all__ = [
     "RunResult",
     "RunReport",
     "compute_gaps",
+    "compute_max_drawdown",
+    "compute_sharpe",
     "run",
     "ROUNDING_DECIMALS",
+    "SHARPE_DEGENERATE_EPS",
+    "TRADING_DAYS_PER_YEAR",
+    "RISK_FREE_RATE",
 ]
 
 # `contracts.yaml` 的 `rounding.decimals`。进入 Summary 的金融量一律取整 ——
@@ -53,6 +58,28 @@ ROUNDING_DECIMALS = 2
 def _r(x: float | None) -> float | None:
     """ADR-038 的取整规则。`None` 透传(单行 CSV 时跳空三值为 None)。"""
     return None if x is None else round(float(x), ROUNDING_DECIMALS)
+
+
+# ═══════════ 风险指标的命名常量(ADR-058)═══════════
+#
+# 三者都【必须】是命名常量而非散落的字面量 —— T23 门 16 直接断言这一点。
+
+# 夏普的退化阈值。**不可写成 `sigma == 0`**:完美的恒定比率增长在浮点里
+# 不给 0 —— `[100.0, 110.0, 121.0, 133.1]` 的 `sigma(ddof=1)` 是 1.2832e-16,
+# `== 0.0` 为假,于是裸算输出 Sharpe = 1.237e16。而它还**依赖数据规模**:
+# 同比例序列起点换成 1e6 时 sigma 恰好是 0.0,守卫反而触发 —— 同一个 bug
+# 在某些输入上发作、另一些上不发作(T7 与 T8 配对钉死这条规模无关性)。
+SHARPE_DEGENERATE_EPS = 1e-12
+
+# 年化因子。**硬编码 252 并绑死日线**(ADR-058)—— 与 ADR-021 的跳空统计
+# 同构,靠 ADR-059 的声明守护:喂周线会无声放大约 2.2 倍,框架无从检测
+# K 线周期。换 K 线粒度时这两条 ADR 都必须重审。
+TRADING_DAYS_PER_YEAR = 252
+
+# 无风险利率取 0,**不加 CLI 参数**(ADR-058)。跨区间的固定 rf 标量本身
+# 就是错的(2010 年代 ≈ 0.2% vs 2023 ≈ 5%),给错比不给更危险 —— 它看
+# 起来精确。偏差方向已知(夏普偏高)且由 ADR-059 公开声明。
+RISK_FREE_RATE = 0.0
 
 
 # ═════════════════════════ 值对象(ADR-044)═════════════════════════
@@ -98,6 +125,19 @@ class Summary:
     max_gap_pct: float | None
     max_gap_date: str | None
     mean_abs_gap_pct: float | None
+    # ── 以下四个字段由 ADR-058 【追加在末尾】,均带默认值 ──
+    #
+    # **追加而非插入**:ADR-037 钉死了字段【顺序】,而既有门大量使用位置
+    # 构造 —— 插在中间会让位置参数静默错位。手法与 ADR-046 补 `Fill.amount`
+    # 时逐字一致(那条也是「末尾 + 默认值」)。
+    #
+    # 默认 `None` 而非必填,是为了保持加性/向后兼容:既有门(如
+    # `tests/test_report_plot.py::_summary` )按关键字构造 `Summary` 且不传
+    # 这四个字段,必填会让它们在**本任务之外**红掉。
+    sharpe: float | None = None                    # 裸比率 1.23,**不乘 100**
+    max_drawdown_pct: float | None = None          # 百分数,**正数表跌幅**
+    max_drawdown_peak_date: str | None = None      # YYYY-MM-DD
+    max_drawdown_trough_date: str | None = None
 
 
 @dataclass(frozen=True)
@@ -196,6 +236,154 @@ def _gap_stats(df: "pd.DataFrame") -> tuple[float | None, str | None, float | No
     )
 
 
+# ═══════════════════ 风险指标(ADR-058)═══════════════════
+
+
+def _simple_returns(equity: Sequence[float]) -> list[float]:
+    """简单收益 `r[k] = equity[k+1] / equity[k] - 1`,`k = 0 .. n-2`。
+
+    **简单收益,非对数收益。** 理由不是与 `total_return_pct` 口径一致,而是
+    **所有参考实现都用简单收益**(empyrical 用 `pct_change`)—— 对数夏普无法
+    与任何公开数字比较,那会让这个指标失去唯一的用途。
+
+    **入参是 `equity`,绝不是 `close`**(ADR-058)—— 从 `close` 算的话同一
+    份 CSV 上**所有策略的夏普都相同**,那是荒谬的。
+    """
+    return [
+        equity[k + 1] / equity[k] - 1.0
+        for k in range(len(equity) - 1)
+    ]
+
+
+def compute_sharpe(equity: Sequence[float]) -> float | None:
+    """年化夏普比率(ADR-058)。数学上未定义时返回 `None`,**绝不返回 NaN**。
+
+        Sharpe = mean(r) / std(r, ddof=1) × √252         (rf = 0)
+
+    返回 `None` 而非 `NaN`:**`NaN` 不是合法 JSON**,会打断前端;`None` →
+    `null` → 按 `contracts.yaml` 的 `formats.null_display` 显示。
+
+    **退化判定按 ADR-058 的规范顺序**,顺序本身是契约的一部分:
+
+    1. `len(r) < 2` → `None`,**短路,不调用 std**。2 行 CSV 两种 `ddof` 都
+       退化(`ddof=1` 给 `nan`、`ddof=0` 给 `0/0`)。
+    2. `sigma <= SHARPE_DEGENERATE_EPS * max(1.0, abs(mean))` → `None`。
+       `max(1.0, ·)` 使 `mean == 0` 时判定式仍然成立。
+    3. 否则给真实数字。
+
+    `sigma == 0 且 mean != 0` → `None` 而不是 `+inf`:无限夏普字面为真
+    (无风险套利)但无操作价值,只能来自合成数据。
+
+    **策略从不交易 → `None`。** 这是 `0/0`,数学上未定义。返回 `0.0` 是一种
+    *特定的谎言*:`0.0` 意思是「承担了风险但没赚到超额收益」,而真相是
+    「**没承担风险**,比率未定义」。
+
+    **交易但回到起点 → 真实数字,非 `None` 非 `0.0`。** `[100,150,100]` 给
+    `r = [0.5, -0.3333]`、`sharpe = +2.24` —— 总收益为 0 而夏普为正,是算术
+    平均的波动拖累效应。数字按定义正确但反直觉,故进 ADR-059 的声明。
+    """
+    if len(equity) < 2:
+        return None
+
+    r = _simple_returns(equity)
+
+    # ── 退化 ① ── 短路:**不得**调用 std(它会给 nan)
+    if len(r) < 2:
+        return None
+
+    mean = _fmean(r)
+
+    # **`ddof=1` 字面写出**,不依赖任何库的默认值(T23 门 17)。
+    # `np.std` 默认 `ddof=0`、`pd.Series.std` 默认 `ddof=1` —— 实测
+    # `[0.01, 0.02, 0.03]` 分别给 0.00816 与 0.01。写「标准差」是歧义的;
+    # 不加限定的 `np.std` 会把夏普按 √((n-1)/n) **静默放大**
+    # (T6 门:正确实现给 4.58,`ddof=0` 给 5.61)。
+    # empyrical 与 quantstats 都用 `ddof=1`。
+    sigma = _stdev(r, ddof=1, mean=mean)
+
+    # ── 退化 ② ── **不可写 `sigma == 0.0`**,见 SHARPE_DEGENERATE_EPS 的注释
+    if sigma <= SHARPE_DEGENERATE_EPS * max(1.0, abs(mean)):
+        return None
+
+    # rf = 0 故分子就是 mean(r) 本身 —— 常量显式参与,使「rf 去哪了」可读。
+    excess = mean - RISK_FREE_RATE
+    return excess / sigma * math.sqrt(TRADING_DAYS_PER_YEAR)
+
+
+def _fmean(xs: Sequence[float]) -> float:
+    """算术平均。独立出来只为让 `compute_sharpe` 的分子分母读起来对称。"""
+    return sum(xs) / len(xs)
+
+
+def _stdev(xs: Sequence[float], *, ddof: int, mean: float) -> float:
+    """样本标准差,**`ddof` 是必填关键字参数** —— 调用处无法「忘记」指定它。
+
+    这不是风格洁癖:本仓库的两个候选库默认值**相反**(`np.std` 为 0、
+    `pd.Series.std` 为 1),而 ADR-058 钉死 `ddof=1`。把 `ddof` 做成必填
+    关键字,使「依赖默认值」在语法上不可表达。
+    """
+    n = len(xs)
+    return math.sqrt(sum((x - mean) ** 2 for x in xs) / (n - ddof))
+
+
+def compute_max_drawdown(
+    equity: Sequence[float],
+    dates: Sequence[str],
+) -> tuple[float, str | None, str | None]:
+    """(max_drawdown_pct, peak_date, trough_date)。ADR-058。
+
+    * **running max 含当前点**(inclusive)—— 新高处 `dd == 0`,永不为正。
+      empyrical 用 `np.fmax.accumulate`、quantstats 用 `expanding().max()`,
+      与此一致。
+    * **平手取较早**(严格 `<`),与 ADR-021 的 `max_gap_pct` 平手规则一致。
+      `[100,90,100,90]` 的谷底取 **bar1** 而非 bar3。
+    * **峰值起点取 `equity[0]`,不取 `initial_cash`。** 两者可证明相等 ——
+      由 ADR-002 的 T+1 语义强制(bar 0 上 `resolve_queue` 见空队列,首个
+      `EquityPoint` 记录前不可能有成交)。**不要**把 `initial_cash` 穿进来
+      「修正」它:不可能改变任何结果,只会引入一个分歧源。
+    * **单调上涨 / 恒定净值 / 单行 CSV → `0.0`,但两个日期 `None`** ——
+      给日期等于断言发生了一次没发生的回撤。
+    * **与夏普的不对称是有意且有原则的**:「未发生下跌」是**确定事实**
+      (`0.0`),而「零风险下的单位风险收益」是**未定义**(`None`)。
+    * **不需要 epsilon**(实测 `[100*1.1**i]` 的回撤精确等于 `0.0`)——
+      它是比较与 running-max,从不做近邻量相减。不要对称地也加一个,
+      那是无意义的模仿。
+    """
+    if not equity:
+        return 0.0, None, None
+
+    run_max = equity[0]
+    worst = 0.0
+    peak_i: int | None = None
+    trough_i: int | None = None
+    cur_peak_i = 0
+
+    for i, point in enumerate(equity):
+        if point > run_max:
+            run_max = point
+            cur_peak_i = i
+        dd = point / run_max - 1.0        # 恒 <= 0
+        if dd < worst:                    # 严格 `<` ⇒ 平手取较早
+            worst = dd
+            peak_i = cur_peak_i
+            trough_i = i
+
+    # **必须用 `abs(worst)`,不可写 `-worst`。** `worst` 初值 `0.0`,单调上涨
+    # 或恒定净值时它从未被重新赋值,于是 `-worst` 得 **`-0.0`**:
+    # `json.dumps(-0.0)` 输出 `'-0.0'`、`'{:.2f}'.format(-0.0)` 输出 `'-0.00'`
+    # —— 屏幕上出现 `-0.00%`,正是本 ADR 选正数约定时要避免的「负号 + 带符号
+    # 格式化器 → 双重负号」显示 bug。14 条 fixture 里有 4 条命中,而
+    # `-0.0 == 0.0` 与 `-0.0 >= 0.0` 在 Python 里都为 `True`,**没有一条
+    # 只断言 `>= 0.0` 的门会红** —— 故门必须断言符号位。
+    max_drawdown_pct = abs(worst) * 100.0
+
+    return (
+        max_drawdown_pct,
+        None if peak_i is None else dates[peak_i],
+        None if trough_i is None else dates[trough_i],
+    )
+
+
 # ═════════════════════════ 主循环 ═════════════════════════
 
 
@@ -288,6 +476,19 @@ def _run_one(
     final = equity[-1].equity if equity else initial
     max_gap, max_gap_date, mean_abs_gap = _gap_stats(df)
 
+    # ── 风险指标(ADR-058)── 计算在**这里**,不在 `report.py`
+    #
+    # ADR-044 规定 `report.py` 只渲染不计算,故两个指标必须在 `Summary` 构建
+    # 处算完,交给 `report.py` 的只能是已完成全部算术的裸标量。
+    #
+    # 喂进去的是 `equity` 序列,**不是** `close` —— 见 `_simple_returns`。
+    equity_series = [pt.equity for pt in equity]
+    equity_dates = [pt.date for pt in equity]
+    sharpe = compute_sharpe(equity_series)
+    mdd_pct, mdd_peak_date, mdd_trough_date = compute_max_drawdown(
+        equity_series, equity_dates
+    )
+
     summary = Summary(
         start=bar_date_str(dates[0]),
         end=bar_date_str(dates[-1]),
@@ -300,6 +501,12 @@ def _run_one(
         max_gap_pct=max_gap,
         max_gap_date=max_gap_date,
         mean_abs_gap_pct=mean_abs_gap,
+        # ADR-058 的四个字段。两个数值字段按 `rounding.fields` 取整
+        # (`sharpe` 是**裸比率不乘 100**),两个日期字段不参与舍入。
+        sharpe=_r(sharpe),
+        max_drawdown_pct=_r(mdd_pct),
+        max_drawdown_peak_date=mdd_peak_date,
+        max_drawdown_trough_date=mdd_trough_date,
     )
 
     return RunResult(

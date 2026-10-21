@@ -880,3 +880,87 @@ def test_png_endpoint_404_for_unknown_run(client, isolated_out):
     r = client.get("/api/runs/20991231-235959/png/x_equity.png")
     assert r.status_code == 404
     assert r.json()["code"] == "NOT_FOUND"
+
+
+# ═══════════════ T23 门 20 · ADR-058 的四个字段到达 API 与前端 ═══════════════
+#
+# ADR-038 的归属条款:**谁引入谁负责**。不门住这条,新字段会止步于
+# `summary.json`,到不了 API 与界面。
+
+_ADR058_FIELDS = (
+    "sharpe", "max_drawdown_pct",
+    "max_drawdown_peak_date", "max_drawdown_trough_date",
+)
+
+
+def test_adr058_fields_reach_post_run_response(client):
+    """`POST /api/run` 的 `summary` 块含四个新键,且均为**裸标量**。"""
+    r = client.post("/api/run", json={
+        "strategies": [STRAT_A], "data_file": DATA_FILE,
+        "cash": 100000.0, "fee": 0.0,
+    })
+    assert r.status_code == 200, r.text
+    s = r.json()["results"][0]["summary"]
+    for k in _ADR058_FIELDS:
+        assert k in s, f"{k} 没到 API —— 新字段止步于 summary.json"
+    assert isinstance(s["sharpe"], (float, type(None)))
+    assert isinstance(s["max_drawdown_pct"], float)
+    # 裸标量:不含任何格式化字符串
+    assert "%" not in r.text
+
+
+def test_adr058_fields_reach_get_run_by_id(client):
+    """门 20 的字面要求:`GET /api/runs/{id}` 的响应含四个键。"""
+    posted = client.post("/api/run", json={
+        "strategies": [STRAT_A], "data_file": DATA_FILE,
+        "cash": 100000.0, "fee": 0.0,
+    })
+    assert posted.status_code == 200, posted.text
+    run_id = posted.json()["run_id"]
+
+    got = client.get(f"/api/runs/{run_id}")
+    assert got.status_code == 200, got.text
+    s = got.json()["results"][0]["summary"]
+    for k in _ADR058_FIELDS:
+        assert k in s, f"{k} 不在 GET /api/runs/{{id}} 的响应里"
+
+    # 两条路径同源(ADR-038:逐字段等于该归档的 run.json)
+    for k in _ADR058_FIELDS:
+        assert s[k] == posted.json()["results"][0]["summary"][k]
+
+
+def test_adr058_pydantic_model_is_the_single_source_of_truth():
+    """`SummaryModel` 钉死四个字段,且**全部可空** ⇒ 加性原则成立。"""
+    fields = api.SummaryModel.model_fields
+    for k in _ADR058_FIELDS:
+        assert k in fields, f"{k} 不在 api.SummaryModel —— pydantic 是单一真相来源"
+        assert fields[k].default is None, f"{k} 必须可空/有默认(加性扩展)"
+
+
+def test_frontend_types_mirror_the_pydantic_model_field_for_field():
+    """`frontend/src/types.ts` 的 `Summary` **逐字段镜像** pydantic 模型。
+
+    I8 仍成立:前端只声明类型、不做任何算术。
+    """
+    ts = (ROOT / "frontend" / "src" / "types.ts").read_text(encoding="utf-8")
+    block = ts.split("export interface Summary {", 1)[1].split("}", 1)[0]
+    for k in _ADR058_FIELDS:
+        assert k in block, f"{k} 不在 types.ts 的 Summary —— 到不了界面"
+
+    # 可空性也要镜像
+    assert "sharpe: number | null" in block
+    assert "max_drawdown_pct: number | null" in block
+    assert "max_drawdown_peak_date: string | null" in block
+    assert "max_drawdown_trough_date: string | null" in block
+
+    # I8:前端不得对这两个指标做算术
+    src_dir = ROOT / "frontend" / "src"
+    for path in src_dir.rglob("*.ts*"):
+        if "__fixtures__" in str(path) or "__tests__" in str(path):
+            continue
+        body = path.read_text(encoding="utf-8")
+        for bad in ("Math.sqrt", "ddof", "* 100", "/ 100"):
+            if bad in body and "max_drawdown" in body:
+                raise AssertionError(
+                    f"{path.name} 疑似对风险指标做算术({bad!r})—— 违反 I8"
+                )
