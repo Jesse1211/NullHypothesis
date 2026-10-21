@@ -86,6 +86,8 @@ export interface ArchivedRun {
     data_file: string
     cash: number
     fee: number
+    /** ADR-053(阶段三 / T20)追加在末尾:行为表文件名,`null` = 无行为表。 */
+    events?: string | null
   }
   results: Array<{
     strategy: string

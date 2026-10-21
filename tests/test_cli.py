@@ -114,7 +114,12 @@ def test_run_json_matches_the_pinned_schema(tmp_path):
 
     assert set(payload) == {"run_id", "request", "results", "assumptions",
                             "comparison_png_path"}
-    assert set(payload["request"]) == {"strategies", "data_file", "cash", "fee"}
+    # `events` 由 ADR-053 追加在末尾(阶段三 / T20)。既有键的名称、类型、
+    # 顺序逐字不变;新键可空且默认 `null`,故 §7 第 1 条的加性原则成立。
+    assert set(payload["request"]) == {"strategies", "data_file", "cash", "fee",
+                                       "events"}
+    # 不传 `--events` 时它必须是 `null` —— 加性保证的可观测形式(T20 门 11)。
+    assert payload["request"]["events"] is None
     assert set(payload["results"][0]) == {"strategy", "summary", "png_path"}
     assert set(payload["results"][0]["summary"]) == set(C["field_formats"])
     import re

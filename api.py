@@ -32,7 +32,7 @@ import backtest
 import nullhypothesis.plot as plot
 import nullhypothesis.report as report_mod
 import nullhypothesis.run as nh_run
-from nullhypothesis.data import load_csv
+from nullhypothesis.data import load_csv, load_events
 from nullhypothesis.errors import DataValidationError, StrategyError
 
 __all__ = [
@@ -179,12 +179,18 @@ class RunRequestBody(BaseModel):
     """`POST /api/run` 的请求体(ADR-038 钉死字段名)。
 
     `strategies` 是**文件名**列表,不是代码(I11)。
+
+    `events` 由 ADR-053(阶段三 / T20)追加 —— **可选,默认 `None`(无行为表)**。
+    按 ADR-038 的归属条款「谁引入谁负责」,本字段的 pydantic 模型与
+    `frontend/src/types.ts` 由 T20 更新。
     """
 
     strategies: list[str] = Field(min_length=1)
     data_file: str
     cash: float = 100000.0
     fee: float = 0.0
+    # ── 以下字段由 ADR-053(阶段三)追加在末尾 ──
+    events: str | None = None
 
 
 def execute_run(body: RunRequestBody) -> dict[str, Any]:
@@ -202,6 +208,11 @@ def execute_run(body: RunRequestBody) -> dict[str, Any]:
 def _execute_run_locked(body: RunRequestBody) -> dict[str, Any]:
     """**调用方必须已持有 `RUN_LOCK`。** T10 的门对本函数打桩。"""
     df = load_csv(DATA_DIR / body.data_file)
+    # ADR-053 / T20:行为表载入与校验。**本任务不做价格调整** —— `df` 未被
+    # 触碰;调价是 T21 的事。失败抛 DataValidationError,由 post_run 映射
+    # 成 `DATA_VALIDATION`(ADR-031),与价格 CSV 的失败同一通道。
+    if body.events is not None:
+        load_events(DATA_DIR / body.events, price_dates=df["Date"])
     paths = [STRATEGIES_DIR / s for s in body.strategies]
     results = nh_run.run(paths, df, cash=body.cash, fee=body.fee)
 
@@ -209,6 +220,7 @@ def _execute_run_locked(body: RunRequestBody) -> dict[str, Any]:
     request = nh_run.RunRequest(
         strategies=list(body.strategies), data_file=body.data_file,
         cash=body.cash, fee=body.fee,
+        events=body.events,                  # ADR-053,追加在末尾
     )
     report = backtest.build_report(run_id, request, results)
 
@@ -265,6 +277,11 @@ def _reject_bad_names(body: RunRequestBody) -> JSONResponse | None:
     if not _validate_data_name(body.data_file):
         return _err("INVALID_REQUEST", f"数据文件名非法:{body.data_file!r}",
                     {"field": "data_file", "value": body.data_file}, 422)
+    # ADR-053 的行为表也是 `data/` 下的 `.csv`,故过**同一道**白名单闸 ——
+    # 它同样会被拿去拼路径,漏掉它等于给 `events` 开一条穿越通道。
+    if body.events is not None and not _validate_data_name(body.events):
+        return _err("INVALID_REQUEST", f"行为表文件名非法:{body.events!r}",
+                    {"field": "events", "value": body.events}, 422)
     return None
 
 
@@ -276,6 +293,11 @@ def _reject_missing_files(body: RunRequestBody) -> JSONResponse | None:
     if not (DATA_DIR / body.data_file).is_file():
         return _err("NOT_FOUND", f"数据文件不存在:{body.data_file}",
                     {"data_file": body.data_file}, 404)
+    # ADR-053:`--events` 的 CLI 侧规则是「给定则文件须存在」;API 侧的
+    # 对应物是 404(名字合法但文件不在),与 `data_file` 逐字对称。
+    if body.events is not None and not (DATA_DIR / body.events).is_file():
+        return _err("NOT_FOUND", f"行为表文件不存在:{body.events}",
+                    {"events": body.events}, 404)
     return None
 
 

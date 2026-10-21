@@ -102,12 +102,20 @@ class Summary:
 
 @dataclass(frozen=True)
 class RunRequest:
-    """一次运行的输入。ADR-044 钉死四个字段,与 ADR-038 的 `request` 同构。"""
+    """一次运行的输入。ADR-044 钉死四个字段,与 ADR-038 的 `request` 同构。
+
+    `events` 由 ADR-053(阶段三 / T20)**追加在末尾**。追加而非插入的理由同
+    ADR-046 的 `Fill.amount`:ADR-044 钉死了**顺序**,而既有门大量使用位置
+    构造 —— 插在中间会让位置参数静默错位。它**可空且默认 `None`**(无行为表),
+    故不传它时行为与阶段二逐点相同(§7 第 1 条的加性原则)。
+    """
 
     strategies: list[str]
     data_file: str
     cash: float
     fee: float
+    # ── 以下字段由 ADR-053(阶段三)追加在末尾 ──
+    events: str | None = None                # 行为表文件名;None = 无行为表
 
 
 @dataclass(frozen=True)

@@ -63,7 +63,12 @@ VALUE_OBJECTS = [
     # `close` 由 ADR-049 补入(前端要在同一张图上画价格对照曲线)。
     ("nullhypothesis.run", "EquityPoint",
      {"date", "cash", "shares", "equity", "close"}),
-    ("nullhypothesis.run", "RunRequest", {"strategies", "data_file", "cash", "fee"}),
+    # `events` 由 ADR-053 **追加在末尾**(阶段三 / T20)—— 行为表文件名,
+    # 可空且默认 `None`,故既有的四位置参数构造逐字仍可用。追加而非插入的
+    # 理由同下面的 `Fill.amount`:ADR-044 钉死了【顺序】,插在中间会让
+    # 既有门的位置构造静默错位。
+    ("nullhypothesis.run", "RunRequest",
+     {"strategies", "data_file", "cash", "fee", "events"}),
     ("nullhypothesis.run", "RunResult",
      {"strategy", "equity", "trades", "trades_ledger", "summary"}),
     ("nullhypothesis.run", "RunReport",

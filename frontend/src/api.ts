@@ -87,6 +87,8 @@ export interface RunRequest {
   data_file: string
   cash: number
   fee: number
+  /** ADR-053(阶段三 / T20)追加:行为表文件名。可选,省略/`null` = 无行为表。 */
+  events?: string | null
 }
 
 export function run(body: RunRequest): Promise<RunResponse> {

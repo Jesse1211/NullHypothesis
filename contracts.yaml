@@ -227,6 +227,55 @@ fixtures:
     assert_rendered_at: 21
     assert_absent_at: 20
 
+  # ───────────────── T20 · 公司行为表(ADR-053 / ADR-054)─────────────────
+  # 本块是 T20 全部门的期望值来源。测试只引用 key,不复述字面量
+  # (本文件开头的规则,由 tests/test_design_binding.py 强制)。
+  #
+  # 为什么连列名与枚举都钉在这里:ADR-053 的 schema 是【对外】契约
+  # (用户手写 / 厂商导出的 CSV 照它写),而 T21 的仲裁、T24 的 README
+  # 都要复述同一组名字 —— 那正是本文件开头记载的「同一个值五处复述」。
+  adr053_events_schema:
+    columns: ["date", "event", "ratio", "amount"]     # 四列,顺序即 ADR-053 的表
+    event_values: ["split", "dividend"]               # 枚举,其他值一律报错
+    ignored_columns: ["symbol", "ticker"]             # 校验并忽略(前向兼容 OQ-16)
+    # 枚举门必须抓到的真实野外值:前两个来自厂商导出
+    # (EODHD 的 splits 端点会混入 spinoff),后两个是 ISO 的电文代码。
+    rejected_event_values: ["stock_dividend", "spinoff", "SPLF", "DVCA"]
+
+  # ADR-053 的 ratio ≡ 前向股数比(约定 A)。四种野外约定里只有 A 与
+  # `f = 1/ratio` 自洽;A 与 B 互为倒数,读反即 16 倍误差且不抛异常。
+  adr053_ratio_convention:
+    split_4_for_1: 4.0            # 4:1 拆股 —— 约定 A
+    reject_b_4_for_1: 0.25        # 约定 B(价格乘数)—— 读反的那个值
+    reverse_split_1_for_8: 0.125  # 1:8 合股;ratio < 1 自然即合股
+    reject_b_1_for_8: 8.0
+    noop_ratio: 1.0               # 约定 D 把真实 2:1 拆股写成这个 → 必须响亮警告
+
+  # 门 3:若按 UTC datetime 解析会整体移一天的用例。
+  # 一个 UTC 午夜时刻在任何负时区(如 America/New_York)的本地日历日上
+  # 就是前一天 —— 故这条断言「日历日未被移动」。
+  adr053_calendar_day:
+    raw_date: "2015-06-18"
+    expect_iso: "2015-06-18"
+    reject_utc_shifted: "2015-06-17"   # 按 UTC datetime 解析会移到这天
+
+  # REAL_STACK_GATE 的真实行为表:一次拆股 + 两笔分红(ADR-053 的示例形状)。
+  # CLI 与 API 两条路径必须解析出【同一个】事件序列。
+  adr053_real_events_table:
+    expect_count: 3
+    expect_dates: ["2015-05-13", "2015-06-18", "2016-02-04"]
+    expect_events: ["dividend", "split", "dividend"]
+    expect_ratios: [null, 5.0, null]
+    expect_amounts: [1.50, null, 0.52]
+    filename: "events.csv"
+
+  # 门 10:行为表是【标的的属性】,可能覆盖比价格切片更长的区间 →
+  # 区间外的事件被忽略 + 提示(不是错误)。
+  adr053_out_of_range:
+    before_range: "2014-06-10"     # 早于价格序列首日
+    after_range: "2016-07-20"      # 晚于价格序列末日
+    expect_kept_count: 1           # 只剩区间内那一笔
+
 # ═══════════════════════ 门的可执行性前提 ═══════════════════════
 # 第 8 轮发现的第四类缺陷:三条自检规则都在审查「断言」,没有任何一条
 # 审查「到达断言所需的布置」。T8 的碰撞门要 monkeypatch,而同一任务的
