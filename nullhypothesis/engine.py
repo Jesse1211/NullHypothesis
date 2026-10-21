@@ -529,11 +529,15 @@ class Backtest:
             #    钉死为可分辨的两个值:`expect_shares_half == 1847` 与
             #    `reject_divisor_change_half == 1844`。)
             #
-            # 循环的两个守卫各有理由:`target > 0` 使它必然终止且不会递减到
-            # 负数(卖出侧的差额由 `target_shares - shares_held` 产生,不是
-            # 这里);`> investable` 用严格大于,故「恰好花光」(ADR-012 的
-            # `floor` 用尽余额是**设计预期**,见 `fixtures.adr012_floor_vs_ceil`)
-            # 不被误判成买不起。
+            # 循环的守卫与比较式各有理由(**按现行形式陈述**,下同):守卫
+            # `target_shares > shares_held` 使它必然终止,且不会递减到持仓量
+            # 以下 —— 卖出侧的差额由 `target_shares - shares_held` 自然产生,
+            # 不由这里递减得到;比较式对 `self._account.cash` 用**严格大于**,
+            # 故「恰好花光」(ADR-012 的 `floor` 用尽余额是**设计预期**,见
+            # `fixtures.adr012_floor_vs_ceil`)不被误判成买不起。
+            #   (本段原文按 `target > 0` 与 `> investable` 陈述 —— 那正是上面
+            #    刻意不引用的、已废弃的第一版形式。ADR-057 落地时一并更正:
+            #    注释若描述一个不存在的循环,读者会以它为准去「修」正确的代码。)
             #
             # 向后兼容:`rate == 0.0`(ADR-007 的默认值)时
             # `target * Open <= investable` 由 floor 本身保证,循环一次都不转

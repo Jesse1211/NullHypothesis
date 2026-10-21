@@ -104,21 +104,24 @@ class Summary:
 class RunRequest:
     """一次运行的输入。ADR-044 钉死四个字段,与 ADR-038 的 `request` 同构。
 
-    阶段三**追加在末尾**(ADR-044 的字段表逐字):`slippage`(ADR-056)。
-    追加而非插入的理由同 ADR-046 的 `Fill.amount` —— 既有门大量使用**位置
-    构造**,插在中间会让位置参数静默错位。新字段有默认值,故既有调用点
+    阶段三**追加在末尾**,顺序依 ADR-044 的字段表逐字:`events`(ADR-053 / T20)
+    在前、`slippage`(ADR-056 / T22)在后。追加而非插入的理由同 ADR-046 的
+    `Fill.amount` —— 既有门大量使用**位置构造**,插在中间会让位置参数静默错位。
+    两个新字段都有默认值(`None` = 无行为表 / `0.0` = 无滑点),故既有调用点
     (`RunRequest(strategies, data_file, cash, fee)`)**一字不改**仍合法,
-    `§7` 第 1 条的加性原则成立。
+    不传它们时行为与阶段二**逐点相同**(§7 第 1 条的加性原则)。
 
-    *(ADR-053 的 `events` 由 T20 追加在 `slippage` 之后 —— 两任务共享本类,
-    合并时必须 rebase 并**保留双方字段**,见 T22 门 17 / T20 门。)*
+    *(本类由 T20 与 T22 共享。两者各自分支上都只有自己那一个字段,
+    合并时必须 rebase 并**保留双方字段**,见 T22 门 17 / T23 门 19。
+    此处已 rebase 到含 `events` 的 trunk 之上,双方字段俱在。)*
     """
 
     strategies: list[str]
     data_file: str
     cash: float
     fee: float
-    # ── 以下字段由 ADR-056(阶段三)追加在末尾 ──
+    # ── 以下两个字段由 ADR-053 / ADR-056(阶段三)追加在末尾 ──
+    events: str | None = None                # 行为表文件名;None = 无行为表
     slippage: float = 0.0                    # 滑点率,与 fee 同口径(0.0005 = 5bps)
 
 

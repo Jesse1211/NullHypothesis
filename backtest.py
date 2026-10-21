@@ -110,7 +110,9 @@ def write_run_json(report, png_paths: dict[str, str], out_dir: Path) -> None:
             "data_file": report.request.data_file,
             "cash": report.request.cash,
             "fee": report.request.fee,
-            # ADR-038/056:追加在既有键之后。既有键的**名称、类型、顺序逐字不变**。
+            # ADR-053 / ADR-056 追加在既有键之后。既有键的**名称、类型、顺序
+            # 逐字不变**;顺序依 ADR-044 的 `RunRequest`:`events` 在前。
+            "events": report.request.events,
             "slippage": report.request.slippage,
         },
         "results": [
@@ -149,6 +151,8 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         help="滑点率 s,小数分数(0.0005 = 5bps),买入按 Open*(1+s)、卖出按 Open*(1-s) 成交",
     )
     p.add_argument("--out", default="out")
+    # ADR-053(阶段三加性扩展 ADR-039 的参数表):可选,默认「无行为表」。
+    p.add_argument("--events", default=None)
     return p.parse_args(argv)
 
 
@@ -163,6 +167,11 @@ def _validate(ns: argparse.Namespace) -> None:
         raise _ArgError(f"--slippage 必须在 [0, 0.1) 内,收到 {ns.slippage}")
     if not Path(ns.data).is_file():
         raise _ArgError(f"--data 文件不存在:{ns.data}")
+    # ADR-039 扩展行:`--events` 给定则**文件须存在**(ADR-053)。
+    # 与 `--data` 逐字对称 —— 参数指向的文件不存在是参数错误(退出码
+    # `invalid_cli_args`),不是数据校验失败。
+    if ns.events is not None and not Path(ns.events).is_file():
+        raise _ArgError(f"--events 文件不存在:{ns.events}")
 
     stems: dict[str, str] = {}
     for s in ns.strategy:
@@ -179,7 +188,7 @@ def _validate(ns: argparse.Namespace) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    from nullhypothesis.data import load_csv
+    from nullhypothesis.data import load_csv, load_events
     from nullhypothesis.run import RunRequest, run
     from nullhypothesis import plot, report as report_mod
 
@@ -194,6 +203,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         df = load_csv(ns.data)
+        # ADR-053 / T20:行为表经**独立文件**载入与校验。
+        # **本任务不做价格调整** —— `events` 只是一个经校验的事件序列,
+        # 调价是 T21 的事。故这里载入即止,`df` 未被触碰。
+        if ns.events is not None:
+            load_events(ns.events, price_dates=df["Date"])
     except DataValidationError as e:
         print(f"❌ {e}", file=sys.stderr)
         return _exit_code("data_validation")
@@ -220,6 +234,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         data_file=Path(ns.data).name,
         cash=ns.cash,
         fee=ns.fee,
+        # ADR-053:与 `data_file` 同口径 —— 存**文件名**,不存路径。
+        events=None if ns.events is None else Path(ns.events).name,
         slippage=ns.slippage,          # ADR-056:生效值进报告头与 run.json
     )
     report = build_report(run_id, request, results)

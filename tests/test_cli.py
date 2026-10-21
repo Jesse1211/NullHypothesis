@@ -114,10 +114,14 @@ def test_run_json_matches_the_pinned_schema(tmp_path):
 
     assert set(payload) == {"run_id", "request", "results", "assumptions",
                             "comparison_png_path"}
-    # `slippage` 由 ADR-056 追加(阶段三的加性扩展,ADR-038 逐字授权)。
+    # `events`(ADR-053 / T20)与 `slippage`(ADR-056 / T22)追加在末尾
+    # ——阶段三的加性扩展,ADR-038 逐字授权。既有键的名称、类型、顺序逐字
+    # 不变;新键可空/有默认,故 §7 第 1 条的加性原则成立。
     # 仍是集合相等 —— 这条门的作用是「字段名错会让阶段二读不到阶段一的产物」。
     assert set(payload["request"]) == {"strategies", "data_file", "cash", "fee",
-                                       "slippage"}
+                                       "events", "slippage"}
+    # 不传 `--events` 时它必须是 `null` —— 加性保证的可观测形式(T20 门 11)。
+    assert payload["request"]["events"] is None
     assert set(payload["results"][0]) == {"strategy", "summary", "png_path"}
     assert set(payload["results"][0]["summary"]) == set(C["field_formats"])
     import re

@@ -87,6 +87,12 @@ export interface RunRequest {
   data_file: string
   cash: number
   fee: number
+  /** ADR-053(阶段三 / T20)追加:行为表文件名。可选,省略/`null` = 无行为表。 */
+  events?: string | null
+  /** ADR-056(阶段三 / T22)追加:滑点率。与 `fee` 同口径(小数,`0.0005`
+   *  = 5bps),范围 `0 <= s < 0.1`。可选,省略 = 后端默认 `0.0`。
+   *  上界校验在后端(ADR-039:参数上界属 CLI/API 层)。 */
+  slippage?: number
 }
 
 export function run(body: RunRequest): Promise<RunResponse> {

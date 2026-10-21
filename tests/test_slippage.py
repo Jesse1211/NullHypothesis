@@ -481,11 +481,9 @@ def _delta_next_day(cash: float, held: int, open_price: float, s: float) -> int:
     直接用 `resolve_queue` 的返回值读差额:`None` ⇒ 差额 0(ADR-008 无声跳过),
     否则 `+shares`(买)/ `-shares`(卖)。本函数**不复算**任何期望值。
     """
-    bt = Backtest(cash=cash, slippage=s)
-    # 先把账本摆到 (cash, held):用一笔 ShareOrder 建仓会花掉现金,故这里
-    # 直接构造一个起始现金足够的账本,再按零滑点买入 held 股、然后把剩余
-    # 现金调成目标值 —— 但那需要触碰 _account。改用聚合根的合法路径:
-    # 以 held * open_price * (1 + s) + cash 作初始资金,买入 held 股。
+    # 建仓只走聚合根的**合法路径**,不触碰 `_account`(§1:`Account` 不可被
+    # 聚合外引用)。以 `held * unit + cash` 作初始资金买入 `held` 股,成交后
+    # 账本恰好落在 `(cash, held)` —— 下面的两条 assert 就是这件事的断言。
     unit = open_price * (1.0 + s)
     bt = Backtest(cash=held * unit + cash, slippage=s)
     first = _one_fill(bt, ShareOrder(shares=held), open_price)
@@ -684,8 +682,10 @@ def test_g11_real_stack_cli_with_slippage_on_synthetic_csv(tmp_path, strategy):
     )
 
     archive = next(out.iterdir())
+    import csv
+
     rows = list(
-        __import__("csv").DictReader(
+        csv.DictReader(
             (archive / C["filenames"]["trades_csv"].format(stem=strategy))
             .read_text(encoding="utf-8").splitlines()
         )

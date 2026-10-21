@@ -2660,6 +2660,17 @@ max_drawdown_pct = abs(worst) * 100.0     # 符号翻转 → 正数幅度;abs �
     **必须 rebase 并保留双方字段**,不得以本任务的版本整体覆盖。
     门:合并后 `RunRequest` 同时含 `slippage` 与(若 T20 已落地)`events`,
     且 `Summary` 的字段数不因本任务而减少
+18. **`api.py` 的 pydantic 模型与 `frontend/src/types.ts` 同步加入 `slippage`**
+    (ADR-038 的归属条款「谁引入谁负责」;与 T23 门 20 同形)——
+    否则新字段止步于后端,ADR-056 的机制 2(「每张图、每个 JSON 都自带
+    『这条曲线假设了多少成本』」)在 Web 界面上断掉,而那条机制正是 ADR-056
+    用来替代「非零默认值」的诚实性论证本身。
+    门:`ArchivedRun.request` 与 `api.ts` 的 `RunRequest` 两处 TS 类型
+    **逐字段镜像** `RunRequestBody`,且归档详情页与报告头并列显示滑点生效值。
+    *(本门是第二轮返工补的:T22 第一轮改了后端三处却漏了 TS 两处,而当时
+    前端唯一相关的门只断言 `types.ts` **存在**。故同时补上机械门 ——
+    `tests/test_layout.py::test_types_ts_mirrors_*` 从 pydantic 模型**导出**
+    期望字段集合,双向比对,人读交叉核对不再是这条契约的唯一保障)*
 
 **REAL_STACK_GATE(G11,最廉价最高价值的一道门)**:
 `buy_and_hold` + **真实 `data/synthetic.csv`** + `--slippage 0.0005` 跑完整 CLI。
