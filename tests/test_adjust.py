@@ -49,6 +49,7 @@ from nullhypothesis.data import (
     FACTOR_AGREEMENT_TOL,
     GAP_SUSPICION_PCT,
     PRICE_COLUMNS,
+    SPLIT_DIRECTION_TOL,
     CorporateEvent,
     UnadjustedPriceWarning,
     UnsortedDateWarning,
@@ -733,6 +734,108 @@ def test_amount_equal_to_close_before_is_an_error(tmp_path):
     assert "amount >= close_before" in str(excinfo.value)
 
 
+# ═══════════ ADR-040:`.file` 必须指向**出问题的**那份 CSV ═══════════
+
+
+def test_events_table_failures_name_the_events_file_not_the_price_csv(tmp_path):
+    """ADR-040 / DESIGN.md 的现行条款:「所有异常断言类型为
+    `DataValidationError`(ADR-040)且 `.file`/`.row`/`.column` 字段正确」。
+
+    行为表的四条失败情形的过错都在**行为表**里 —— 它们的 `.column` 是
+    `ratio`/`amount`,而价格 CSV **根本没有这两列**。把价格路径填进 `.file`
+    会把用户指向一份**无辜的文件**:`errors.py` 自述 `file` 是「出问题的
+    CSV 路径」,而 T20 的 `load_events` 对自己的失败早已报行为表路径。
+
+    ADR-019 的整个姿态是**响亮失败**;一个指错文件名的响亮失败,正是
+    ADR-019 要防的那种误导 —— 它看起来确定无疑,却把人送去改错的文件。
+
+    本门对**四条**情形逐一断言,因为它们共用同一个归属机制:
+    只钉其中一条,另外三条可以悄悄漂回去。
+    """
+    close_before = MAGNITUDE["close_before"]
+    two_flat_bars = [("2020-01-02", close_before), ("2020-01-03", close_before)]
+
+    cases: list[tuple[str, list[tuple[str, float]], str, str, str]] = [
+        # (情形名, 价格 bar, 行为表行, 期望 .column, 消息里的锚)
+        (
+            "方向门(门 11)",
+            [("2020-01-02", 400.0), ("2020-01-03", 100.0)],
+            split_row("2020-01-03", DIRECTION["reversed_ratio"]),
+            "ratio",
+            "方向门",
+        ),
+        (
+            "量级门(门 12)",
+            two_flat_bars,
+            dividend_row("2020-01-03", MAGNITUDE["reject_amount"]),
+            "amount",
+            "单笔分红占价格比例过高",
+        ),
+        (
+            "amount >= close_before(门 13)",
+            two_flat_bars,
+            dividend_row("2020-01-03", MAGNITUDE["zero_factor_amount"]),
+            "amount",
+            "amount >= close_before",
+        ),
+        (
+            "首根 bar 除息日(门 7)",
+            two_flat_bars,
+            dividend_row("2020-01-02", 1.5),
+            "amount",
+            "除息日没有前一交易日",
+        ),
+    ]
+
+    for i, (name, bars, row, column, anchor) in enumerate(cases):
+        sub = tmp_path / f"case{i}"
+        sub.mkdir()
+        prices = write_prices(sub, bars, name="prices.csv")
+        events = write_events_file(sub, [row], name="corporate_actions.csv")
+
+        with pytest.raises(DataValidationError) as excinfo:
+            load_csv(prices, events=events)
+        err = excinfo.value
+
+        assert anchor in str(err), f"{name}:消息锚不在,本 case 测的是别的门"
+        assert err.file == str(events), (
+            f"{name}:`.file` 应是**行为表**路径 {events},实得 {err.file} ——"
+            f"而 `.column` 是 {err.column!r},价格 CSV 没有这一列"
+        )
+        assert err.file != str(prices), (
+            f"{name}:`.file` 不得是价格 CSV —— 那是无辜的那份文件"
+        )
+        assert err.column == column, f"{name}:`.column` 应为 {column}"
+
+
+def test_arbitration_failure_still_names_the_price_csv(tmp_path):
+    """上一条门的**对侧**:两路不一致(ADR-052)的 `.column` 是 `Close` ——
+    那是**价格 CSV** 的列,故 `.file` 必须仍是价格 CSV。
+
+    没有这条门,一个「把所有 T21 失败都报成行为表」的实现也能通过上一条。
+    `.file` 的口径是**出问题的那份**,不是「只要有行为表就报行为表」。
+    """
+    # 构造同 `test_paths_disagreeing_beyond_tol_is_an_error`:行为表如实写
+    # 4.0 使**方向门成立**(否则会先死在方向门上,本门就测了别的东西),
+    # 而 `Adj Close` 额外折进一笔行为表漏掉的分红(×0.97)→ 两路差 3%。
+    bars = [("2020-01-02", 400.0), ("2020-01-03", 100.0)]
+    prices = write_prices(tmp_path, bars, adj=[400.0 * 0.25 * 0.97, 100.0])
+    events = write_events_file(
+        tmp_path, [split_row("2020-01-03", SPLITF["forward_4_for_1"])]
+    )
+
+    with pytest.raises(DataValidationError) as excinfo:
+        load_csv(prices, events=events)
+    err = excinfo.value
+
+    assert "两条因子路径不一致" in str(err)
+    assert err.column == "Close", "仲裁失败的列是价格 CSV 的 Close"
+    assert err.file == str(prices), (
+        f"仲裁失败的 `.file` 应是价格 CSV {prices},实得 {err.file}"
+    )
+    assert err.row is not None, "仲裁失败定位到具体某一天,`.row` 不得为 None"
+
+
 # ═══════════════════ 门 14 / 15:跳空体检(两路缺席) ═══════════════════
 
 
@@ -937,14 +1040,47 @@ def test_bar_like_still_declares_only_open_and_date():
 
 def test_thresholds_match_contracts_yaml():
     """T21 门 12 的原话:「阈值**不可写成裸字面量**…参照 OQ-11 对跳空阈值
-    的处置」。故 `data.py` 的三个常量必须与 `contracts.yaml` 逐值一致。
+    的处置」。故 `data.py` 的**四个**常量必须与 `contracts.yaml` 逐值一致。
 
     没有这条门,改 `contracts.yaml` 而不改 `data.py`(或反之)会让两处
     悄悄漂移 —— 那正是本文件开头记载的「同一个值多处复述」缺陷。
+
+    `SPLIT_DIRECTION_TOL` 原先是**四个里唯一没被钉住的**:它在 `data.py`
+    有值、在 `fixtures.adr054_direction_gate.tol` 也有值,两处可以无声分叉。
+    它现在进 `thresholds`,与另外三个同等对待。
     """
     assert GAP_SUSPICION_PCT == THRESHOLDS["gap_suspicion_pct"]
     assert FACTOR_AGREEMENT_TOL == THRESHOLDS["factor_agreement_tol"]
     assert DIVIDEND_YIELD_SUSPICION == THRESHOLDS["dividend_yield_suspicion"]
+    assert SPLIT_DIRECTION_TOL == THRESHOLDS["split_direction_tol"]
+    # 方向门 fixture 里的 tol 与 thresholds 的是**同一个量**,不得分叉
+    assert DIRECTION["tol"] == THRESHOLDS["split_direction_tol"]
+
+
+def test_every_t21_threshold_constant_is_pinned():
+    """**元门**:`data.py` 里由 T21 引入的每个阈值常量都必须出现在
+    上一条门里 —— 否则「加了第五个阈值但忘了钉」会无声通过。
+
+    这正是 `SPLIT_DIRECTION_TOL` 漂了一轮的机制:门按名字逐条列举,
+    而新增的那个名字没人把它加进列表。本门改为从模块 `__all__` 反查。
+    """
+    import inspect
+
+    from nullhypothesis import data as data_module
+
+    source = inspect.getsource(test_thresholds_match_contracts_yaml)
+    t21_threshold_names = [
+        name
+        for name in data_module.__all__
+        if name.endswith(("_TOL", "_PCT", "_SUSPICION"))
+    ]
+    assert t21_threshold_names, "前提自检:阈值常量的命名约定已变"
+    for name in t21_threshold_names:
+        assert name in source, (
+            f"{name} 是 data.py 的阈值常量,但没有被 "
+            f"test_thresholds_match_contracts_yaml 钉到 contracts.yaml —— "
+            f"它与 contracts.yaml 可以无声漂移(门 12)"
+        )
 
 
 def test_gap_threshold_is_the_oq11_value():

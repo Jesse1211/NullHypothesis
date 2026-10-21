@@ -2642,6 +2642,14 @@ max_drawdown_pct = abs(worst) * 100.0     # 符号翻转 → 正数幅度;abs �
     `load_csv` 的输出与本任务**之前逐值相同**;`data/synthetic.csv` 与 `tests/` 下全部内联 CSV 的现有断言**逐字不变**
 18. ADR-035 钉死的 `load_csv` 签名**未变**
 19. **下游零影响**:`pd.read_csv` 全库仍仅 `data.py` 一处;`BarLike` 仍只声明 `Open` 与 `Date`
+20. **`.file` 必须指向出问题的那份 CSV(ADR-040)**:行为表的四条失败情形
+    (方向门 / 量级门 / `amount >= close_before` / 首根 bar 除息日)的 `.column` 是
+    `ratio`/`amount` —— 价格 CSV **没有这两列**,故 `.file` 必须是**行为表**路径。
+    *(第 9 轮审查实测:四条全报成价格 CSV,把用户指向一份无辜的文件;
+    `load_events` 对自己的失败早已报对,是复权路径把价格路径传了下去。)*
+    **且必须配对侧门**:两路不一致(ADR-052)的 `.column` 是 `Close`,
+    故那一条的 `.file` 仍是**价格 CSV** —— 否则「把 T21 全部失败都报成行为表」
+    的实现也能通过。调用方直传已解析事件序列时无文件可归属,用 `"<events>"` 占位
 
 **REAL_STACK_GATE**:用**真实的 `data/synthetic.csv`**(2516 行,无 `Adj Close`)跑完整 CLI,
 断言 ① 无提示、② 结果与变更前**逐点相同**。

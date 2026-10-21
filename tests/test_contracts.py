@@ -398,6 +398,239 @@ def test_oq08_threshold_is_two_sided(c):
     assert f["assert_absent_at"] <= f["render_when_items_gt"]
 
 
+# ─────────── T21 · 因子法复权的 fixture 算术(ADR-050…054)───────────
+#
+# `contracts.yaml` 的 T21 块自述「每一项都由 tests/test_contracts.py 重新
+# 算出来」。这组测试是那句话的**兑现** —— 它原先是一句空头承诺:值都对,
+# 但没有任何一条断言去重算它们,于是下一个作者会以为算术是机械保护的。
+# 本文件开头记载的缺陷(「同一个值多处复述,没有机制强制一致」)在这里
+# 的形态是:fixture 的期望值与它声称的公式可以无声分叉。
+
+def test_adr053_close_before_basis_arithmetic(c):
+    """ADR-053 实测段:分红在前、拆股在后。两种 `close_before` 读法
+    **差 6.09%**,这组 fixture 的全部期望值都从原始序列重算。"""
+    f = c["fixtures"]["adr053_close_before_basis"]
+    raw, dates = f["raw_closes"], f["dates"]
+    assert len(raw) == len(dates) == 4
+
+    # close_before ≔ 除息日【前一交易日】的【原始】收盘价
+    ex_idx = dates.index(f["dividend_date"])
+    close_before = raw[ex_idx - 1]
+    assert close_before == f["expect_close_before"]
+
+    f_div = 1.0 - f["dividend_amount"] / close_before
+    f_split = 1.0 / f["split_ratio"]
+    assert f_div == pytest.approx(f["expect_f_dividend"])
+    assert f_split == pytest.approx(f["expect_f_split"])
+
+    # 首行 cumfactor = 两个事件都严格晚于它 → 两因子之积(ADR-050)
+    adjusted_first = raw[0] * f_div * f_split
+    assert adjusted_first == pytest.approx(f["expect_adjusted_close_first"])
+
+    # H2 类缺陷:close_before 误读成**除息日之后**的(已拆股)收盘价
+    wrong_f_div = 1.0 - f["dividend_amount"] / raw[-1]
+    wrong_first = raw[0] * wrong_f_div * f_split
+    assert wrong_first == pytest.approx(f["reject_adjusted_close_first"])
+    assert adjusted_first != pytest.approx(wrong_first), (
+        "两种读法必须可区分,否则门 6(b) 测不到任何东西"
+    )
+    # ADR-053 实测的 6.09% —— 这个量级是本 fixture 存在的理由
+    assert abs(wrong_first / adjusted_first - 1.0) == pytest.approx(0.0609, abs=1e-4)
+
+    # 门 6(c):总收益 == 「除息日收盘再投资」的地面真值(ADR-055 的声明)
+    total_return = raw[-1] / adjusted_first - 1.0
+    assert total_return == f["expect_total_return"]
+    ground_truth = (1.0 + f["dividend_amount"] / raw[1]) * f["split_ratio"] * raw[-1]
+    assert ground_truth == f["ground_truth_terminal"]
+    # 两条独立算路必须同值 —— 这才证明「因子法 ≡ 自动再投资」为真
+    assert ground_truth / 100.0 - 1.0 == pytest.approx(total_return)
+
+
+def test_adr050_cumfactor_strictly_later_rule(c):
+    """ADR-050 的「**严格晚于 t**」:中间区段只含**后一个**事件的因子。"""
+    f = c["fixtures"]["adr050_cumfactor"]
+    f_a = 1.0 / f["split_a_ratio"]
+    f_b = 1.0 / f["split_b_ratio"]
+
+    assert f_a * f_b == pytest.approx(f["expect_segment_before_a"])
+    assert f_b == pytest.approx(f["expect_segment_between"])
+    # 除权日当根 bar 若被自己的事件调整,中间区段就会错成两者之积
+    assert f["reject_segment_between"] == pytest.approx(f_a * f_b)
+    assert f["expect_segment_between"] != f["reject_segment_between"], (
+        "正确值与错误值必须可区分,否则门 4 测不到 inclusive/exclusive 之差"
+    )
+    assert f["last_row_cumfactor"] == 1.0, "后复权:最新一行恒为 1.0"
+
+
+def test_adr050_split_factor_is_the_reciprocal(c):
+    """门 5:`f = 1/ratio`。**合股必须放大**历史价(因子 > 1)。"""
+    f = c["fixtures"]["adr050_split_factor"]
+    assert 1.0 / f["forward_4_for_1"] == pytest.approx(f["expect_factor_4_for_1"])
+    assert 1.0 / f["reverse_1_for_8"] == pytest.approx(f["expect_factor_1_for_8"])
+    assert f["expect_factor_4_for_1"] < 1.0, "正向拆股缩小历史价"
+    assert f["expect_factor_1_for_8"] > 1.0, "合股**放大**历史价,不是缩小"
+
+
+def test_adr054_direction_gate_values(c):
+    """门 11:约定 A 与 B **互为倒数**,读反即 16 倍误差。"""
+    f = c["fixtures"]["adr054_direction_gate"]
+    assert f["reversed_ratio"] == pytest.approx(1.0 / f["true_ratio"])
+    # 16 倍:正确因子 1/4 = 0.25,读反得 4.0 → 比值 16
+    assert (1.0 / f["reversed_ratio"]) / (1.0 / f["true_ratio"]) == pytest.approx(16.0)
+    # 容差必须容得下厂商噪声,又远小于「方向写反」的偏差
+    assert 0.0 < f["tol"] < 1.0
+    assert f["tol"] == c["thresholds"]["split_direction_tol"], (
+        "方向门容差在 thresholds 与 fixture 两处出现 —— 不得分叉"
+    )
+
+
+def test_adr054_dividend_magnitude_is_two_sided(c):
+    """门 12:**肯定 + 否定**两侧。只有肯定侧时,
+    一个「对每笔分红都报错」的实现也能通过。"""
+    f = c["fixtures"]["adr054_dividend_magnitude"]
+    threshold = c["thresholds"]["dividend_yield_suspicion"]
+    cb = f["close_before"]
+
+    assert f["reject_amount"] / cb >= threshold, "肯定侧必须真的越界"
+    assert f["accept_amount"] / cb < threshold, "否定侧必须真的在阈值之下"
+    # 门 13:amount >= close_before → 因子 <= 0
+    assert f["zero_factor_amount"] >= cb
+    assert 1.0 - f["zero_factor_amount"] / cb <= 0.0, (
+        "门 13 的用例必须真的让因子 <= 0(否则它测的是量级门)"
+    )
+
+
+def test_adr052_arbitration_tol_admits_vendor_noise(c):
+    """门 10:`tol` **不可取 1e-6** —— Tiingo 把 7:1 存成带噪声的值。"""
+    f = c["fixtures"]["adr052_arbitration"]
+    tol = c["thresholds"]["factor_agreement_tol"]
+
+    clean = 1.0 / f["clean_ratio"]
+    noisy = 1.0 / f["noisy_ratio"]
+    rel_dev = abs(noisy - clean) / abs(clean)
+    assert rel_dev == pytest.approx(f["measured_rel_dev"], rel=1e-9)
+
+    assert rel_dev < tol, "实测噪声必须被 1e-4 容下(否则这条门几乎必红)"
+    assert rel_dev >= 1e-6, "且必须被 1e-6 误报 —— 这正是不取 1e-6 的理由"
+
+
+def test_adr051_gap_health_check_boundary(c):
+    """门 15:体检阈值的**两侧**。(a) 侧钉死运算符为 `>=`。"""
+    f = c["fixtures"]["adr051_gap_health_check"]
+    threshold = c["thresholds"]["gap_suspicion_pct"]
+    dec = c["rounding"]["decimals"]
+
+    # 5:4 拆股:裸算 −19.999999999999996,round 后恰为 −20.0
+    bare = (1.0 / f["boundary_ratio"] - 1.0) * 100.0
+    assert bare != -threshold, "裸值必须**不**等于阈值,否则 round 的必要性消失"
+    assert round(bare, dec) == f["boundary_gap_pct"]
+    assert abs(round(bare, dec)) >= threshold, "`>=` 必须抓到边界"
+    assert not abs(bare) >= threshold, (
+        "裸值(未 round)抓不到 —— 故 round 规则是本门的前提"
+    )
+
+    # (b) 安静侧 / 门 14 的响亮侧
+    assert abs(f["quiet_gap_pct"]) < threshold, "−15% 必须在阈值之下"
+    assert abs(f["loud_gap_pct"]) >= threshold, "−75%(4:1 的签名)必须抓到"
+
+
+def test_adr019_adj_close_follows_the_sort(c):
+    """门 8 × ADR-019:`Adj Close` 必须跟着**同一个排序置换**走。
+
+    fixture 的四个 cumfactor 必须**逐根互不相同** —— 对称序列(如
+    0.5/0.5/1.0)测不出错配:置换后两侧仍相等。"""
+    f = c["fixtures"]["adr019_adj_close_follows_the_sort"]
+    raw, adj = f["raw_closes"], f["adj_closes"]
+
+    cumf = [a / r for a, r in zip(adj, raw)]
+    assert cumf == pytest.approx(f["cumfactors"])
+    assert len(set(f["cumfactors"])) == len(f["cumfactors"]), (
+        "四个 cumfactor 必须互不相同,否则排序置换不可见"
+    )
+    assert f["cumfactors"][-1] == 1.0, "后复权:末行归一化为 1.0"
+    # 复权后收盘恒等于 Adj Close —— 这正是路径一反解的定义
+    assert f["expect_adjusted_closes"] == pytest.approx(adj)
+
+    order = f["shuffled_row_order"]
+    assert sorted(order) == list(range(len(raw))), "必须是一个真正的置换"
+    assert order != sorted(order), "首行不是最早的日期 —— 否则不是乱序输入"
+
+    # 漏掉重对齐的错序列:按乱序行序读 Adj Close,再配回已排序的 Close
+    misaligned = [adj[order[i]] / raw[i] for i in range(len(raw))]
+    normalised = [v / misaligned[-1] for v in misaligned]
+    wrong = [r * n for r, n in zip(raw, normalised)]
+    assert wrong == pytest.approx(f["reject_adjusted_closes"])
+    assert wrong[-1] == pytest.approx(f["expect_adjusted_closes"][-1]), (
+        "末行在两侧相同 —— 故门的断言必须落在**中间**各行上"
+    )
+    assert wrong[:-1] != pytest.approx(f["expect_adjusted_closes"][:-1])
+
+
+def test_t21_thresholds_are_internally_consistent(c):
+    """T21 的四个阈值各自有一条 ADR / OQ 钉它,且彼此量级不重叠。"""
+    t = c["thresholds"]
+    assert t["gap_suspicion_pct"] == 20.0, "OQ-11:构建期不得改"
+    assert t["factor_agreement_tol"] == 1e-4, "ADR-052:取 1e-4,不取 1e-6"
+    assert t["dividend_yield_suspicion"] == 0.25
+    assert t["split_direction_tol"] == 0.05
+    # 仲裁容差必须远小于两条「量级」阈值 —— 它量的是浮点噪声,不是业务偏差
+    assert t["factor_agreement_tol"] < t["split_direction_tol"]
+    assert t["split_direction_tol"] < t["dividend_yield_suspicion"]
+
+
+def test_every_t21_fixture_block_is_recomputed_here():
+    """**元门**:`contracts.yaml` 的 T21 块自述「每一项都由
+    tests/test_contracts.py 重新算出来」。本门让那句话**不可能变成假话** ——
+    新增一个 T21 fixture 而不写重算断言,本门即红。
+
+    这正是第 9 轮审查抓到的缺陷形态:注释声称存在一个机械保护,而那个
+    保护并不存在(§7 规则 2:「不得编造理由 —— 引用的任何『项目规则』
+    『约定』必须真实存在」)。
+    """
+    source = Path(__file__).read_text(encoding="utf-8")
+    t21_fixtures = [
+        "adr053_close_before_basis",
+        "adr050_cumfactor",
+        "adr050_split_factor",
+        "adr054_direction_gate",
+        "adr054_dividend_magnitude",
+        "adr052_arbitration",
+        "adr051_gap_health_check",
+        "adr019_adj_close_follows_the_sort",
+    ]
+    for key in t21_fixtures:
+        assert f'"{key}"' in source, (
+            f"contracts.yaml 的 T21 fixture {key} 没有在本文件里被重算 —— "
+            f"而该块自述每一项都被重算。要么补断言,要么删掉那句话"
+        )
+
+    # 反向:`contracts.yaml` 的 T21 块里**每一个** fixture key 都必须在
+    # 上面的清单里。不得先用清单去过滤声明 —— 那样写出来的断言是恒真的
+    # (集合与自己的子集比),新增一个未重算的 fixture 会悄悄通过。
+    contracts = CONTRACTS.read_text(encoding="utf-8")
+    lines = contracts.splitlines()
+    start = next(
+        i for i, ln in enumerate(lines) if "T21 · 因子法复权" in ln
+    )
+    end = next(
+        (i for i in range(start + 1, len(lines))
+         if lines[i].startswith("# ")),
+        len(lines),
+    )
+    declared = [
+        ln.strip().rstrip(":")
+        for ln in lines[start:end]
+        if ln.startswith("  ") and not ln.startswith("   ")
+        and ln.rstrip().endswith(":") and not ln.strip().startswith("#")
+    ]
+    assert declared, "前提自检:没在 contracts.yaml 里定位到 T21 块的任何 key"
+    assert set(declared) == set(t21_fixtures), (
+        f"T21 块里有未被重算的 fixture:"
+        f"{sorted(set(declared) - set(t21_fixtures))};"
+        f"或清单里有已不存在的 key:{sorted(set(t21_fixtures) - set(declared))}"
+    )
+
+
 # ───────────────────────── 门的可执行性前提 ─────────────────────────
 
 def test_no_gate_requires_monkeypatch_across_subprocess(c):
