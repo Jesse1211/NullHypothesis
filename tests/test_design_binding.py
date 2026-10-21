@@ -265,13 +265,133 @@ def test_exit_codes_match_their_domain_meaning(c):
 
 
 def test_frozen_text_keeps_its_load_bearing_content(c):
-    """冻结文案是 ADR-001/020/023 的唯一守卫 —— 改措辞等于削弱那条守卫。"""
+    """冻结文案是那些不可验证前提与已知偏差的唯一守卫 —— 改措辞等于削弱守卫。
+
+    每条断言钉的是该文案**承载的那件事**,不是它的措辞 —— 来自 ADR 的领域
+    语义,不是来自 YAML 自身(否则「改得自洽」就没有任何东西反对)。
+
+    **T24 / ADR-055 的破坏性更新**:`assumption_adjusted` 此前被钉为
+    「含『复权』且含『不验证』」。ADR-050 之后「框架不验证复权」**是假的**
+    —— 框架自己在 `load_csv` 里做复权,且 ADR-051/054 确实在验证。
+    继续钉「不验证」等于用一条门**强制保留一句假话**,故本门随文案一并更新:
+    现在钉的是「复权发生在框架内」。*(这正是替换而非补充的理由:两条声明
+    若并存,`summary.txt` 会在相邻两行自相矛盾。)*
+    """
     ft = c["frozen_text"]
     assert "对账" in ft["reconcile_line"] and "==" in ft["reconcile_line"]
-    assert "复权" in ft["assumption_adjusted"] and "不验证" in ft["assumption_adjusted"]
+
+    # ── ADR-055:复权的七条 ──
+    # 新锚:复权在【框架内】。反向断言退役的那句假话不得回归。
+    assert "复权" in ft["assumption_adjusted"]
+    assert "框架内" in ft["assumption_adjusted"], (
+        "ADR-055:该键须声明复权发生在框架内(因子法)"
+    )
+    assert "不验证" not in ft["assumption_adjusted"], (
+        "ADR-050 之后「框架不验证复权」是假的 —— 该说法已被 ADR-055 退役,不得回归"
+    )
+    assert "预先复权" not in ft["assumption_adjusted"], (
+        "「OHLC 由框架外预先复权」已被 ADR-050 推翻(ADR-001 主张 B/C/D)"
+    )
+    assert "高估" in ft["assumption_dividend_reinvested"], (
+        "ADR-055 最重要的一条:分红再投资让净值曲线【高估】真实可得收益"
+    )
+    assert "基准" in ft["assumption_event_basis_unverifiable"]
+    assert "Volume" in ft["assumption_volume_not_adjusted"]
+    assert "体检" in ft["assumption_no_factor_path"] and \
+        "诊断" in ft["assumption_no_factor_path"], "体检是提示,不是诊断"
+    assert "比率" in ft["assumption_ratio_not_level"] and \
+        "水平" in ft["assumption_ratio_not_level"], (
+            "ADR-055 的有界泄露:保比率、不保水平"
+        )
+
+    # ── ADR-002 / ADR-020:成交语义(未变)──
     assert "市价单" in ft["assumption_market_order"] and "无条件" in ft["assumption_market_order"]
+
+    # ── ADR-059:滑点的七条 ──
+    assert "合并" in ft["assumption_slippage_fixed_bps"], "价差与冲击被合并成一个常数"
+    assert "规模无关" in ft["assumption_slippage_size_blind"] and \
+        "偏低" in ft["assumption_slippage_size_blind"], "对大单严重偏低是方向性结论"
+    assert "开盘" in ft["assumption_slippage_open_spread"]
+    assert "标的" in ft["assumption_slippage_single_symbol"]
+    assert "Volume" in ft["assumption_slippage_volume_coupling"], (
+        "ADR-059 要求交叉引用 ADR-050:复权不调整 Volume"
+    )
+    assert "乐观" in ft["assumption_slippage_still_optimistic"]
+    assert "不代表可实现收益" in ft["assumption_slippage_zero_default"], (
+        "零滑点永远不现实 —— 默认值的含义必须被声明(ADR-059)"
+    )
+
+    # ── ADR-059:夏普与回撤的七条 ──
+    assert "高估" in ft["assumption_sharpe_rf_zero"], "rf=0 → 系统性高估"
+    assert "日线" in ft["assumption_sharpe_daily_bars"]
+    assert "正态" in ft["assumption_sharpe_iid_normal"]
+    assert "噪声" in ft["assumption_sharpe_short_sample"]
+    assert "未定义" in ft["assumption_sharpe_null_is_undefined"] and \
+        "不表示 0" in ft["assumption_sharpe_null_is_undefined"], (
+            "空值标记表示数学上未定义,**不表示 0**(ADR-058/059)"
+        )
+    assert "不是风险上界" in ft["assumption_drawdown_one_path"]
+    assert "恢复日" in ft["assumption_drawdown_shape"]
+
     assert "1 日" in ft["single_day_notice"]
     assert "杠杆" in ft["leverage_not_implemented"]
+
+
+def test_assumption_order_covers_every_assumption_key_exactly_once(c):
+    """ADR-021 的 `assumptions` 通道:`assumption_order` 是唯一的装配清单。
+
+    三件事:
+      1. 每个键都存在于 `frozen_text`(否则 `backtest.assumption_texts()`
+         在运行时 KeyError —— 而那是在用户跑完一次回测之后才炸)
+      2. 无重复(同一条声明印两遍,就是本阶段要消灭的那类噪声)
+      3. **`frozen_text` 里每个 `assumption_` 前缀的键都被收录** ——
+         这是真正要守的那条:新增一条声明却忘了加进 `assumption_order`,
+         **不会让任何既有门变红**,它只是让一条已知偏差从屏幕上消失。
+    """
+    ft, order = c["frozen_text"], c["assumption_order"]
+    assert len(order) == len(set(order)), f"assumption_order 有重复:{order}"
+    missing = [k for k in order if k not in ft]
+    assert not missing, f"assumption_order 指向不存在的 frozen_text 键:{missing}"
+    uncovered = sorted(k for k in ft if k.startswith("assumption_") and k not in order)
+    assert not uncovered, (
+        f"这些声明文案存在于 frozen_text 但【不会被输出】:{uncovered}\n"
+        "把它们加进 contracts.yaml 的 `assumption_order`,或说明为何不输出"
+    )
+
+
+# `rf=0` / `T+1` / `1+s` / `不表示 0` 这类是**公式与结构标识**,不是校准量级。
+# OQ-12 禁的是后者:没核实过的 bps / 倍数 / 根数 / 百分比。
+_CALIBRATION_SHAPED = re.compile(
+    r"\d+\s*(?:bps|倍|%|根|个交易日|个月)"          # 5bps / 2.2 倍 / 30 根
+    r"|\d+\s*[-–~]\s*\d+\s*(?:bps|倍|%)"          # 1-5bps / 1.5–2 倍
+    r"|年化因子(?:固定|为)?\s*\d"                    # 年化因子固定 252
+)
+
+
+def test_assumption_texts_carry_no_unverified_magnitudes(c):
+    """T24 门 8 / OQ-12:**声明里不含任何未核验的数值。**
+
+    设计期未能核验「开盘约为午间 1.5–2 倍」「大盘股 1–5bps / 小盘股 20–50bps」
+    「周线约 2.2 倍」「30 根 K 线」这类量级,**构建期不得凭记忆补上**。
+    ADR-059 原话:**在一个讲诚实的阶段里放一个未核实的数,正是本阶段反对的东西。**
+
+    本门扫的是**校准形状**的数值(带 bps / 倍 / % / 根 之类单位的量级),
+    而不是一切数字 —— `T+1`、`Open×(1+s)`、`rf=0`、「不表示 0」是公式与
+    结构标识,去掉它们会让声明读不懂。
+
+    *(ADR-059 自己的草稿文案里带着 `252` / `2.2 倍` / `30 根` / `10 倍` ——
+    T24 落地时按本门去掉了它们,并在 §13 记明。这条纪律对设计稿同样适用。)*
+    """
+    offenders = {}
+    for k in c["assumption_order"]:
+        hits = _CALIBRATION_SHAPED.findall(c["frozen_text"][k])
+        if hits:
+            offenders[k] = hits
+    assert not offenders, (
+        "声明文案里出现了未核验的校准量级(OQ-12 / T24 门 8):\n"
+        + "\n".join(f"  frozen_text.{k}: {v}" for k, v in offenders.items())
+        + "\n只写方向性结论。要给具体数值,须先核实文献 + 一份近期券商成本报告"
+    )
 
 
 def test_field_formats_signedness_is_semantically_correct(c):

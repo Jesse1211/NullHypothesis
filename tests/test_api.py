@@ -538,16 +538,22 @@ def test_failed_run_leaves_no_archive_directory(client, isolated_out):
 # ──────────── ADR-021:假设文案 ────────────
 
 
-def test_response_carries_the_two_assumption_texts(client, isolated_out):
-    """它们是 ADR-001 那条不可验证前提的唯一守卫,不得静默丢失。"""
+def test_response_carries_every_assumption_text(client, isolated_out):
+    """ADR-021 的 `assumptions` 通道是那些不可验证前提与已知偏差在界面上的
+    唯一守卫,不得静默丢失。
+
+    **T24 把这条门从「那两条」改为 `assumption_order` 的全集**(ADR-055 +
+    ADR-059,22 条)。断言**逐项且有序**相等 —— 与 CLI 的 `summary.json`
+    同源(T24 门 6:API 不自己装配这个列表,它经同一个 `RunReport` 拿到)。
+    """
     p = client.post("/api/run", json={
         "strategies": [STRAT_A], "data_file": DATA_FILE,
         "cash": 100000.0, "fee": 0.0,
     }).json()
-    ft = C["frozen_text"]
-    assert p["assumptions"] == [
-        ft["assumption_adjusted"], ft["assumption_market_order"],
-    ]
+    expected = backtest.assumption_texts()
+    assert p["assumptions"] == expected
+    # 正向钉死规模:一个只印旧两条的实现不得通过
+    assert len(expected) == len(C["assumption_order"]) > 2
 
 
 # ──────────── ADR-028:服务端串行化(必须观测到锁本身)────────────

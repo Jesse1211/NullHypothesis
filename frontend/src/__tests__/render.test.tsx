@@ -16,6 +16,8 @@ import EquityChart from '../components/EquityChart'
 import ErrorCard from '../components/ErrorCard'
 import HistoryList from '../components/HistoryList'
 import ArchiveDetail from '../components/ArchiveDetail'
+import LimitationsPanel from '../components/LimitationsPanel'
+import limitationsSource from '../components/LimitationsPanel.tsx?raw'
 import { NULL_DISPLAY } from '../format'
 
 const BASE = fixture as unknown as RunResponse
@@ -105,11 +107,15 @@ describe('I8 读模型一致性(前端零算术)', () => {
 // ═══════════════ ADR-021:假设文案可见 ═══════════════
 
 describe('ADR-021 假设文案', () => {
-  it('两条 ⚠ 文案在界面上可见', () => {
+  it('每条 ⚠ 文案在界面上可见', () => {
     const { container } = render(
       <SummaryPanel results={[BASE.results[0]]} assumptions={BASE.assumptions} />,
     )
-    expect(BASE.assumptions.length).toBe(2)
+    // T24:声明从 2 条扩到 ADR-055/059 的全集(复权 7 + 成交语义 1 +
+    // 滑点 7 + 风险指标 7)。**不写裸数字** —— 条数由后端的
+    // `contracts.yaml::assumption_order` 决定,这里只断言「不止那两条」,
+    // 并逐条断言可见。写死一个数会在每次新增声明时变红却毫无信息。
+    expect(BASE.assumptions.length).toBeGreaterThan(2)
     // 断言在 `.assumptions` 列表里逐条出现 —— 不用 RegExp(文案含 `(` `)`
     // 等元字符),也不用 getByText(祖先节点的 textContent 也包含它,
     // 会命中多个元素)。
@@ -117,6 +123,74 @@ describe('ADR-021 假设文案', () => {
     for (const a of BASE.assumptions) {
       expect(text.includes(a), `回执里缺这条假设:${a}`).toBe(true)
     }
+  })
+})
+
+// ═══ T24 门 10 · 「已知局限」区块的新文案(ADR-055 / ADR-059)═══
+//
+// **行为式门,不是自洽 mock**:`assumptions` 直接取自契约 fixture
+// (`run_response.json`,由 pytest 从**真实 API 响应**生成),故这里断言的
+// 「屏幕上印着什么」与后端 `contracts.yaml::frozen_text` 的实际值同源。
+// 后端退役一条声明而前端留着旧文案 → 本块变红。
+//
+// I8 仍成立:本区块除了后端给的 `max_gap_pct` / `max_gap_date` 字段外
+// 不显示任何数字,也不做任何算术。
+
+describe('T24 已知局限区块', () => {
+  function renderPanel() {
+    return render(
+      <LimitationsPanel
+        assumptions={BASE.assumptions}
+        summary={BASE.results[0].summary}
+      />,
+    )
+  }
+
+  it('后端的每一条声明都逐字出现在局限区块里', () => {
+    const { container } = renderPanel()
+    const text = container.querySelector('.limits')!.textContent ?? ''
+    for (const a of BASE.assumptions) {
+      expect(text.includes(a), `局限区块里缺这条声明:${a}`).toBe(true)
+    }
+  })
+
+  it('退役的「未计滑点」不再出现 —— ADR-056 之后它是假的', () => {
+    const { container } = renderPanel()
+    const text = container.querySelector('.limits')!.textContent ?? ''
+    expect(text).not.toContain('未计滑点')
+    // 仍在的那条 §0 非目标,逐字不变
+    expect(text).toContain('不支持做空 / 杠杆 / 限价 / 止损')
+  })
+
+  it('退役的「预先复权 / 框架不验证」不再出现 —— ADR-050 之后它是假的', () => {
+    const { container } = renderPanel()
+    const text = container.querySelector('.limits')!.textContent ?? ''
+    expect(text).not.toContain('预先复权')
+    expect(text).not.toContain('框架不验证')
+    // 并正向断言替代它的那条确实到了屏幕上(ADR-055)
+    expect(text).toContain('复权在框架内完成')
+  })
+
+  it('ADR-059 的两类声明都到达屏幕 —— 滑点与风险指标', () => {
+    const { container } = renderPanel()
+    const text = container.querySelector('.limits')!.textContent ?? ''
+    expect(text).toContain('滑点为固定 bps')          // 滑点
+    expect(text).toContain('rf=0')                    // 夏普
+    expect(text).toContain('不是风险上界')             // 最大回撤
+    expect(text).toContain('高估')                    // 分红再投资(ADR-055)
+  })
+
+  it('I8:局限区块不做算术,且只显示后端给的那两个跳空字段', () => {
+    const src = limitationsSource
+      .split('\n')
+      .filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l))   // 去注释,避免误报
+      .join('\n')
+    // 任何四则运算形态都不许出现(与 TradeList 的那条门同构)
+    expect(src).not.toMatch(/summary\.\w+\s*[-+*/]\s*/)
+    expect(src).not.toMatch(/\btoFixed\(/)            // 格式化走 format.ts
+    expect(src).not.toMatch(/Math\.(max|min|abs|pow|sqrt)/)
+    // 声明来自 props,**不是**组件里的字面量
+    expect(src).toContain('assumptions.map')
   })
 })
 

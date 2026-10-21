@@ -89,11 +89,32 @@ def build_report(run_id: str, request, results) -> Any:
         run_id=run_id,
         request=request,
         results=list(results),
-        assumptions=[
-            c["frozen_text"]["assumption_adjusted"],
-            c["frozen_text"]["assumption_market_order"],
-        ],
+        assumptions=assumption_texts(),
     )
+
+
+def assumption_texts() -> list[str]:
+    """ADR-021 的 `assumptions` 通道 —— **唯一**的声明文案装配点(T24)。
+
+    按 `contracts.yaml` 的 `assumption_order` 逐键取 `frozen_text` 的值,
+    **顺序即屏幕顺序**。本函数不含任何文案字面量。
+
+    为什么是一个显式的 `assumption_order` 而不是「`frozen_text` 的全部键」:
+    `reconcile_line` / `single_day_notice` / `leverage_not_implemented`
+    不是假设声明,各有自己的渲染位置;把它们一并倒进 `assumptions` 会让
+    对账行在屏幕上出现两次。
+
+    为什么此前这里是两行字面键名而现在是一个列表:ADR-055 与 ADR-059 把
+    声明从 2 条扩到 22 条(复权 7 + 成交语义 1 + 滑点 7 + 风险指标 7)。
+    手写键名在那个规模下必然漏 —— 而漏掉一条**不会让任何门变红**,它只是
+    让一条已知偏差从屏幕上消失,正是 T24 要消灭的失效模式。
+
+    `api.py` 不自己装配这个列表 —— 它经 `run.py` 拿到同一个 `RunReport`,
+    故 `summary.json` 与 API 响应的 `assumptions` **同源**(T24 门 6)。
+    """
+    c = contracts()
+    ft = c["frozen_text"]
+    return [ft[k] for k in c["assumption_order"]]
 
 
 def write_run_json(report, png_paths: dict[str, str], out_dir: Path) -> None:

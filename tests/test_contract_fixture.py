@@ -23,6 +23,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
 import api
@@ -156,4 +157,10 @@ def test_fixture_carries_the_fields_t13_consumes():
         assert res["equity"]
         assert set(res["equity"][0]) == {"date", "equity", "close"}
     assert f["comparison_png_path"], "多策略响应必须有 comparison_png_path"
-    assert len(f["assumptions"]) == 2
+    # T24:声明从 2 条扩到 ADR-055/059 的全集。本门按 `assumption_order`
+    # 的长度断言,而不是一个裸的 `2` —— 后者会在新增声明时变红却毫无信息,
+    # 更坏的是诱使人把它改成新的裸数字(下一次新增又红)。
+    order = yaml.safe_load(
+        (ROOT / "contracts.yaml").read_text(encoding="utf-8")
+    )["assumption_order"]
+    assert len(f["assumptions"]) == len(order) > 2

@@ -55,12 +55,92 @@ field_formats:
   max_drawdown_trough_date:  date
 
 # ──────────────────────────── 冻结的文案 ────────────────────────────
+#
+# ═══ T24 / ADR-055 · 一处【破坏性】变更,刻意记在这里 ═══
+# `assumption_adjusted` 的旧值是 "OHLC 已预先复权(框架不验证)"。
+# ADR-050 之后这句话**是假的** —— 框架自己做复权(因子法,`load_csv` 内),
+# 且 ADR-051/054 确实在验证。故该键被【替换】而非被补充:若只新增 ADR-055
+# 的新文案而留着旧值,`summary.txt` 会在相邻两行印出**两条互相矛盾的复权
+# 声明** —— 正是阶段三要消灭的缺陷类型。
+# 替换是破坏性的:它被 ADR-021 的汇总块输出、被 §5/§12 的多条门、
+# 被 `tests/test_design_binding.py::test_frozen_text_is_not_restated` 与
+# `::test_frozen_text_keeps_its_load_bearing_content` 断言 —— 那些门随本次
+# 变更一并更新(T24 门 2)。
+#
+# ═══ OQ-12 · 声明里不含任何未核验的数值 ═══
+# 全部文案只写**方向性结论**。「开盘约为午间 1.5–2 倍」「大盘股 1–5bps /
+# 小盘股 20–50bps」这类量级在设计期**未能核验**,构建期**不得**凭记忆补上。
+# `tests/test_design_binding.py` 有一条门扫描本块的裸数值。
 frozen_text:
   reconcile_line: "✓ 对账:每日 现金+持股市值 == 总资产"
-  assumption_adjusted: "OHLC 已预先复权(框架不验证)"
+
+  # ── ADR-055 · 复权的诚实声明(七条)──
+  # 旧键名**保留**(ADR-021 的汇总块、API 的 `assumptions`、前端的 data 属性
+  # 都按键名引用),只换值 —— 键名换掉会让那些引用静默失效。
+  assumption_adjusted: "复权在框架内完成(因子法,后复权,OHLC 四列同乘)。"
+  assumption_adjusted_not_screen_price: "复权后的价格不是当时屏幕上的价格:交易清单里的成交价从未真实成交过。"
+  assumption_dividend_reinvested: "分红按因子法折进价格,等价于【分红自动再投资且不付手续费】,故净值曲线【高估】真实可得收益。现实中股息是现金落账,要手动买回并付费。"
+  assumption_event_basis_unverifiable: "`amount` 与 `close_before` 必须同股数基准,这是框架无法独立证实的前提;方向门与量级门只能抓到部分违反。"
+  assumption_volume_not_adjusted: "Volume 不随复权调整,复权后它与价格序列不再自洽。"
+  assumption_no_factor_path: "两条因子路径均缺席时不调价,仅按跳空阈值体检 —— 体检是提示,不是诊断。"
+  assumption_ratio_not_level: "后复权精确保留价格【比率】,故尺度不变的策略(均线、穿越、百分比阈值)不受未来事件影响;但它不保留绝对价格【水平】—— 未来的拆股会按一个常数重新缩放整段历史,故在绝对价位上分支的策略会因之后才发生的事件而行为不同。这是一条已知的有界泄露:请写尺度不变的策略。"
+
+  # ── ADR-002 / ADR-020 · 成交语义(原文逐字不变)──
   assumption_market_order: "仅支持市价单。T 日意图在 T+1 开盘无条件执行。"
+
+  # ── ADR-059 · 滑点的诚实声明(七条)──
+  assumption_slippage_fixed_bps: "滑点为固定 bps:买入按 Open×(1+s)、卖出按 Open×(1−s) 成交。它把买卖价差与市场冲击【合并】成一个常数,二者不再可分。"
+  assumption_slippage_size_blind: "滑点与订单规模无关 —— 一股与十倍日成交量收取同一比例成本。真实冲击约正比于 √(订单量/日成交量),故本模型对极小单偏高、对大单严重偏低。框架【不读】Volume 列(BarLike 只声明 Open 与 Date),结构上无从知晓规模 —— 这是边界,不是待办。"
+  assumption_slippage_open_spread: "成交发生在开盘,而开盘的有效价差系统性宽于盘中,故按盘中价差校准的 s 在此偏低。高波动跳空开盘的真实滑点更差,本模型对那些天收取同一 bps(与跳空无条件成交叠加,跳空日的成本被双重低估)。"
+  assumption_slippage_single_symbol: "一个 s 只服务一个标的 —— 大盘股与小盘股的价差相差一个数量级以上。"
+  assumption_slippage_volume_coupling: "滑点与规模无关这一点既是接口边界也是数据完整性边界:框架内的复权不调整 Volume,故即使将来要做成交量参与模型,也必须先解决 Volume 与复权价格的自洽。"
+  assumption_slippage_still_optimistic: "加了滑点的净值曲线依然偏乐观:无永久冲击,故隐含【策略容量无限】;暴跌开盘的集中卖出不受额外惩罚。"
+  assumption_slippage_zero_default: "slippage=0(默认)的曲线不代表可实现收益 —— 零滑点永远不现实。"
+
+  # ── ADR-059 · 夏普与回撤的诚实声明(七条)──
+  assumption_sharpe_rf_zero: "夏普按无风险利率 rf=0 计算,因此被系统性高估。"
+  assumption_sharpe_daily_bars: "夏普假设输入为【日线】,年化因子按日线固定;喂入周线/月线会无声放大该值,框架无法检测 K 线周期。"
+  assumption_sharpe_iid_normal: "夏普假设收益独立同分布且近似正态。真实收益有肥尾与波动聚集,此假设被违反;单个极端日会同时影响分子与分母。"
+  assumption_sharpe_short_sample: "样本过短时夏普是噪声而非信号 —— 几十根 K 线算出的值不可用于比较策略。"
+  assumption_sharpe_null_is_undefined: "夏普为空值标记时表示该值在数学上未定义(不交易、或收益无波动、或样本不足),不表示 0。"
+  assumption_drawdown_one_path: "最大回撤是【这一条历史路径】的统计量,不是风险上界。真实的最糟回撤几乎总在未来。"
+  assumption_drawdown_shape: "最大回撤以正数表示跌幅,区间由峰值日与谷底日给出,不含恢复日。"
+
   single_day_notice: "数据仅 1 日,无法产生交易"
   leverage_not_implemented: "杠杆未实现"
+
+# ──────── ADR-021 的 `assumptions` 通道:输出顺序(T24 门 6)────────
+# `backtest.build_report` / `api` 按本列表逐键取 `frozen_text` 的值,
+# **顺序即屏幕顺序**。为什么是一个显式列表而不是「`frozen_text` 的全部键」:
+# `reconcile_line` / `single_day_notice` / `leverage_not_implemented` 不是
+# 假设声明,它们有各自的渲染位置(对账行 / ADR-023 的提示 / 杠杆提示)。
+#
+# 顺序:复权(ADR-055)→ 成交语义(ADR-002/020)→ 滑点(ADR-059)
+#      → 风险指标(ADR-059)。先讲价格怎么来的,再讲成交怎么发生的,
+#      再讲成交贵了多少,最后讲由此算出的两个比率意味着什么。
+assumption_order:
+  - assumption_adjusted
+  - assumption_adjusted_not_screen_price
+  - assumption_dividend_reinvested
+  - assumption_event_basis_unverifiable
+  - assumption_volume_not_adjusted
+  - assumption_no_factor_path
+  - assumption_ratio_not_level
+  - assumption_market_order
+  - assumption_slippage_fixed_bps
+  - assumption_slippage_size_blind
+  - assumption_slippage_open_spread
+  - assumption_slippage_single_symbol
+  - assumption_slippage_volume_coupling
+  - assumption_slippage_still_optimistic
+  - assumption_slippage_zero_default
+  - assumption_sharpe_rf_zero
+  - assumption_sharpe_daily_bars
+  - assumption_sharpe_iid_normal
+  - assumption_sharpe_short_sample
+  - assumption_sharpe_null_is_undefined
+  - assumption_drawdown_one_path
+  - assumption_drawdown_shape
 
 # ───────────────────────────── 文件名 ─────────────────────────────
 filenames:

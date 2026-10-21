@@ -109,7 +109,9 @@
 
 **推论**:框架读到的 `Close` 就是全部真相。它无法区分"这是复权价还是原始价",也不该试图区分。喂进未复权数据,框架会照算,产出一条错的曲线,**且不会报错**。这是契约的责任,不是框架的 bug。
 
-**该前提不可验证,只能靠文档 + 输出声明守护**(文案见 `contracts.yaml` 的 `frozen_text.assumption_adjusted`,由 ADR-021 输出)。`Volume` 不被引擎读取,故不纳入约束。
+**该前提不可验证,只能靠文档 + 输出声明守护**(**历史记录** —— 主张 D 已被 ADR-051 推翻)。`Volume` 不被引擎读取,故不纳入约束。
+
+> **T24 的键值变更记录**:上一句原本指向 `contracts.yaml` 的 `frozen_text.assumption_adjusted`,当时该键的值是「OHLC 已预先复权(框架不验证)」。**ADR-055 把该键【替换】为「复权在框架内完成」** —— 键名未变(ADR-021 的汇总块与 API 的 `assumptions` 按键名引用),但它现在声明的是**相反**的事实。故本 ADR 不再引用它:一条已作废的主张不该指向一条正在生效的声明。
 
 ### ADR-002 · 执行语义:T 日 Close 决策,T+1 日 Open 成交
 
@@ -398,15 +400,18 @@ python backtest.py --data X.csv --strategy S.py [--strategy S2.py ...] \
  最大跳空      <max_gap_pct 按 field_formats>  <max_gap_date 按 field_formats>
  平均绝对跳空  <mean_abs_gap_pct 按 field_formats>
 ───────────────────────────────
- ⚠ <frozen_text.assumption_adjusted>
- ⚠ <frozen_text.assumption_market_order>
+ ⚠ <frozen_text[k] for k in assumption_order>        每条一行,顺序即 assumption_order
 ```
 
 `<...>` 均为 `contracts.yaml` 的 key —— **本块不含任何字面值**。渲染后的样子由 `field_formats` 决定:`max_gap_pct` 带符号、`mean_abs_gap_pct` 不带(绝对值均值恒 ≥ 0)。
 
 *(此块原先手写成 `-8.42%` / `0.31%`,与九行外的格式表矛盾 —— 第 9 轮实证:把它改成 `+0.31%`,全部契约测试仍绿。现在它没有字面值可改)*
 
-这两条 `⚠` 也必须出现在 API 响应的 `assumptions` 字段(ADR-038)与 Web 界面上 —— 它们是 ADR-001 那条不可验证前提的唯一守卫,不得在界面层静默丢失。
+这些 `⚠` 也必须出现在 API 响应的 `assumptions` 字段(ADR-038)与 Web 界面上(ADR-046 的「已知局限」区块)—— 它们是框架那些不可验证前提与**已知偏差**的唯一守卫,不得在界面层静默丢失。
+
+**装配点唯一**:`backtest.assumption_texts()` 按 `contracts.yaml::assumption_order` 逐键取 `frozen_text` 的值,`summary.txt` / `summary.json` / `run.json` / API 响应 / Web 界面**全部消费同一个列表**(T24 门 6)。CLI 与 API 共用 `backtest.build_report`,故两侧同源这件事是**结构性**的,不靠两处各自维护一份清单。
+
+*(此块原先手写两个键名 `assumption_adjusted` / `assumption_market_order`。**T24 / ADR-055 · ADR-059 把声明从 2 条扩到 22 条** —— 手写键名在那个规模下必然漏,而漏掉一条**不会让任何门变红**:它只是让一条已知偏差从屏幕上消失。故改为引用 `assumption_order`,并由 `tests/test_design_binding.py::test_assumption_order_covers_every_assumption_key_exactly_once` 断言 `frozen_text` 里每个 `assumption_` 前缀的键都被收录。)*
 
 ### 屏幕文本的数值格式(阶段一)
 
@@ -629,8 +634,8 @@ Fill: date: str  side: str  shares: int  price: float  fee: float  amount: float
       "summary": { /* ADR-038 的 summary 块,逐字段相同 */ } }
     // 多策略时此数组有多项
   ],
-  "assumptions": [ /* contracts.yaml 的 frozen_text.assumption_adjusted
-                      与 frozen_text.assumption_market_order,逐字 */ ] }
+  "assumptions": [ /* contracts.yaml 的 frozen_text,按 assumption_order
+                      逐键逐字(T24:ADR-055 + ADR-059,不再是两条) */ ] }
 ```
 
 顶层恰好三个键:`run_id` / `results` / `assumptions`。
@@ -690,8 +695,8 @@ Fill: date: str  side: str  shares: int  price: float  fee: float  amount: float
       "png_path": "out/20261003-172400/buy_and_hold_equity.png" }
   ],
   "comparison_png_path": null,
-  "assumptions": [ /* frozen_text.assumption_adjusted,
-                       frozen_text.assumption_market_order —— 逐字 */ ] }
+  "assumptions": [ /* frozen_text,按 assumption_order 逐键逐字 ——
+                       与 CLI 的 summary.json 同源(T24 门 6) */ ] }
 
 // GET /api/strategies → ["buy_and_hold.py", "ma_cross.py"]
 // GET /api/data       → ["aapl.csv"]
@@ -857,7 +862,7 @@ class EquityPoint:        # 四个字段。T5 的 I3 逐日对账读 cash/shares
 | ~~OQ-02~~ | ~~策略类名约定~~ | **已关闭 → ADR-036**:类可任意命名,每文件恰好一个 `Strategy` 子类。*(原为「由 T2 决定」—— 但「固定名 `Strategy`」会与导入的基类同名冲突,且阶段二的 `GET /api/strategies` 返回文件名,隐含「一文件一策略」。T8/T12/T13 都消费此答案)* |
 | **OQ-03** | 是否支持 `Date` 列为非日期(纯序号) | **不支持**,v0 要求可解析为日期。超出范围勿实现 |
 | **OQ-04** | `comparison.png` 的 y 轴用绝对金额还是归一化净值 | 用**绝对金额**(与单策略图一致);归一化留待 v1 |
-| **OQ-05** | 策略能否访问 `Volume` | 可以(数据原样传入),但 ADR-001 不保证其复权一致性。文档须注明 |
+| **OQ-05** | 策略能否访问 `Volume` | 可以(数据原样传入),但 **`Volume` 不随复权调整** —— 复权后它与价格序列不再自洽(ADR-050/055,文案见 `contracts.yaml` 的 `frozen_text.assumption_volume_not_adjusted`,经 ADR-021 的通道输出)。*(原文作「ADR-001 不保证其复权一致性」—— ADR-050 把复权迁入框架后,不自洽的**原因**变了:不再是「不知道输入复权没有」,而是「框架自己复权了价格却**不动** `Volume`」。这是一条已建成的声明,不再只是「文档须注明」。T24 更正)* |
 | **OQ-06** | `limit` / `stop` 订单 | **v0 不做**(2026-10-03 讨论后决定)。构建期**不得实现**,`order()` 不接受 `limit`/`stop` 参数。<br>已分析的五处语义裁决,留给 v1:<br>① 触发判断需读 `High`/`Low` —— 会使 ADR-001 的契约从"声明四列"变为"真的读取四列"<br>② 跳空穿越限价时成交价为 `min(Open, limit)`,即**可能以远好于指定价成交**,会系统性高估收益<br>③ 同一根 K 线内止损与止盈同时触及时哪个先成交,**从日线数据根本不可知**,只能任意裁决(参考实现选"止损优先");任意裁决易被误读为计算结果<br>④ 止损触发后按市价成交,故**不保证止在止损价**(跳空跌破时成交在开盘价)—— 这是"止损让我更安全"这一直觉的最大陷阱<br>⑤ 未触发挂单的寿命:当日作废保住 I4;GTC 会使多挂单共存,`Order` 从值对象变回实体,领域模型需改<br>**若 v1 要做**:建议只做 `limit` 买 + `stop` 卖(二者分别在无仓/有仓时生效,永不同时触发,从而完全避开 ③) |
 
 ---
@@ -1085,7 +1090,7 @@ CONTRACT_CMD = python3 -m pytest tests/test_contracts.py -q
 - **ADR-021 的渲染部分(计算部分已移至 T5 —— T6 拿到的是 `RunReport`,跳空值已算好)**:
   - 给一份 `max_gap_pct = -8.42` / `max_gap_date = "2020-03-16"` / `mean_abs_gap_pct = 0.31` 的纯 `RunReport` → 断言屏幕文本含 `-8.42%`、`2020-03-16`、`0.31%`
   - 三值为 `null` 的纯 `RunReport`(单行 CSV 情形)→ 断言按 `formats.null_display` 显示、**不抛异常**
-- **ADR-021 的两条 `⚠`**:断言屏幕输出与 `summary.json` 的 `assumptions` 字段都包含它们
+- **ADR-021 的 `⚠` 声明**:断言屏幕输出与 `summary.json` 的 `assumptions` 字段都包含 **`assumption_order` 的每一条**,且**顺序一致**。*(T24 把这条从「那两条」改为全集 —— ADR-055/059 把声明扩到 22 条,而按名字点两条的门对新增的 20 条视而不见:漏印一条已知偏差不会让任何东西变红。门里**不得写裸条数**,按 `len(assumption_order)` 断言)*
 - **`summary.txt` 归 T6**(ADR-035/037):断言它被写入运行目录,且内容**逐字等于**屏幕汇总文本。*(此前 ADR-035 只给 report.py 分了「汇总文本 + summary.json」,而 T8 的门要求 `summary.txt` 存在 —— 该文件无人认领)*
 - **ADR-018 屏幕对比表(归 T6,此前只有 T8 的端到端门)**:给一份含 **2 个** `results` 的纯 `RunReport` → 断言屏幕文本含每策略一行的对比表(两行,各含策略名与其 `final_equity` / `total_return_pct`);给**单个** `results` 的 `RunReport` → 断言**不**渲染对比表。*(T6 的 ADR 列有 018 却无任何条款测它 —— 一个多策略时静默不输出对比表的渲染器能通过 T6 全部门,失败只在 T8 浮现并被归因到错误的任务)*
 - *(**`summary` 字段的数值门已全部移至 T5** —— 与跳空统计同理:T6 收到的是 `RunReport`,`total_return_pct` 等值**已经算好**,而 ADR-044 禁止 T6 重算。于是在 T6 规定的「手工构造纯 `RunReport`」fixture 里,测试作者是**自己把 `25.0` 写进 `Summary` 再断言它等于 `25.0`** —— 同义反复,测的是测试自己的字面量。第 5 轮只把这个推理用在了跳空上,没有推广到同一条门里的其余六个字段)*
@@ -1244,7 +1249,12 @@ CONTRACT_CMD = python3 -m pytest tests/test_contracts.py -q
 
 后端扫描 `data/*.csv`,`GET /api/data` 返回文件名列表,前端提供选择器。
 
-**不支持浏览器上传** → ❌ 明确非目标。ADR-001 的「预复权」契约仍由你在文件层面保证。
+**不支持浏览器上传** → ❌ 明确非目标。**数据来源与配套的公司行为表仍由你在文件层面负责**
+(`data/` 下的 CSV 与 `--events` 行为表)。
+
+*(原文作「ADR-001 的『预复权』契约仍由你在文件层面保证」。ADR-050 把复权迁入
+`load_csv`,那个契约已不存在 —— 留在文件层面的是「这份价格数据从哪来、有没有
+配套的行为表」。T24 更正。)*
 
 ### ADR-028 · 运行为同步请求,按钮禁用防重入
 
@@ -1370,8 +1380,15 @@ T12–T14 第一版把 ADR-037b 的组件清单当成了界面设计,产出单�
 
 **「已知局限」区块为何是契约而非装饰**:批准稿给它的标题是「由设计决定,
 非遗漏」,位置紧跟曲线 —— 目的是让人看曲线时**无法忽略**它。第一版把它
-降级成汇总底部两行小字,正好废掉了它的作用。它是 ADR-001(不可验证的复权
-前提)与 ADR-002(T+1 无条件成交)在界面上的唯一守卫,与 ADR-021 同理。
+降级成汇总底部两行小字,正好废掉了它的作用。它是框架那些不可验证前提与
+**已知偏差**在界面上的唯一守卫 —— 经 ADR-021 的 `assumptions` 通道逐字渲染
+(ADR-055 的复权七条、ADR-002/020 的成交语义、ADR-059 的滑点与风险指标各七条),
+与 ADR-021 同理。
+
+*(原文作「它是 ADR-001(**不可验证的复权前提**)与 ADR-002 在界面上的唯一
+守卫」。ADR-050 把复权迁入框架、ADR-051/054 为它建了门,故「不可验证的复权
+前提」已不是这个区块守的东西 —— 它现在守的是一组**已知且已声明的偏差**。
+T24 随文案一并更正。)*
 
 **布局门**:ADR-037b 的布局门因此扩充为断言上述结构存在 —— 否则本 ADR
 与第一版同病:无门可依,下次照样漂。
@@ -1612,7 +1629,7 @@ FE_BUILD_CMD = npm run build
 - **ADR-029**:传 2 条策略 → 断言 `results` 有两项、各有独立 `equity`/`trades`/`summary`、`comparison_png_path` 指向真实文件;传 1 条策略 → 断言 `comparison_png_path is None`(**非 `""`、非指向文件**)
 - **ADR-026 / I11 的行为式主门(从 T9 下移至此,因端点归 T10)**:`POST /api/run` 的 `strategies` 传入一段**有可观测副作用**的代码串(如写文件到 tmp)→ 断言 422/400 **且该文件未被创建**
 - **ADR-031 每个 `code` 各一测**:坏 CSV → `DATA_VALIDATION` 含 `file`/`row`/`column`;报错策略 → `STRATEGY_ERROR` 含 `bar_index`/`date`/`traceback`;不存在的文件名 → `NOT_FOUND`;请求体字段类型错 → `INVALID_REQUEST`
-- **ADR-021**:断言响应含 `assumptions` 字段且为那两条文案
+- **ADR-021**:断言响应含 `assumptions` 字段,且**逐项有序**等于 `backtest.assumption_texts()`(`assumption_order` 的全集)—— 与 CLI 的 `summary.json` 同源。*(T24 从「那两条」改为全集)*
 - **ADR-028 服务端串行化(必须能观测到锁本身)**:对 run 入口打桩记录每次调用的进入/退出时刻 → 并发发两个 `POST /api/run`,断言两个区间**不重叠**;并断言产生两个不同 `run_id`、两份结果都完整。*(只断言「两个 run_id + 结果完整」不够:ADR-024 的独占 `mkdir` + `-N` 重试单独就能满足这三条,此门会对「完全没有锁」的实现亮绿灯 —— 它测的是第二道防线,看不见第一道的缺失)*
 - 零交易策略(ADR-023)→ 断言 `trades: []` 且不报错
 - **契约 fixture 落盘**:本门须把一份真实响应写入 `frontend/src/__fixtures__/run_response.json`,供 T13 的 mock 使用(见下方契约门)
@@ -1671,7 +1688,7 @@ FE_BUILD_CMD = npm run build
 - **ADR-018 的「不排名」可执行化**:断言对比表的 `<th>` 元素**无 `onClick` handler 且无 `aria-sort` 属性**;断言表内无 `className` 含 `best`/`highlight`/`winner` 的元素。*(原门「断言表格无排序控件、无「最佳」高亮」在陈述上不可证伪 —— 什么算排序控件没有定义)*
 - 单条策略 → 断言图上一条线、无对比表
 - 零交易 → 断言曲线为水平线、交易清单显示空态
-- **ADR-021**:断言两条 `⚠` 假设文案在界面上**可见**。*(它们是 ADR-001 那条不可验证前提的唯一守卫;Web 界面是非作者实际使用的界面,不得静默丢失)*
+- **ADR-021**:断言**每一条** `⚠` 声明文案在界面上**可见**(回执区块与 ADR-046 的「已知局限」区块),基底取**契约 fixture**(由 pytest 从真实响应生成),不用手写 mock。*(它们是框架那些不可验证前提与**已知偏差**的唯一守卫;Web 界面是非作者实际使用的界面,不得静默丢失。T24 从「两条」改为全集,且门里不写裸条数 —— 条数由 `contracts.yaml::assumption_order` 决定)*
 - `blindSpots` 须声明:(a) 未验证图表的**视觉**正确性(仅验证数据绑定);(b) **jsdom 无布局引擎** —— `ResponsiveContainer` 在真实浏览器里父容器无高度时渲染为零宽白图,而 jsdom 中查询 `<Line>` 仍然通过。**这正是一种字面意义的白屏,自动化门结构上看不见它**,只能由下方人工门覆盖
 
 ### T14 · 历史 UI + 错误卡片
@@ -2075,22 +2092,27 @@ amount / close_before  须落在合理带内
 
 ### ADR-055 · 复权的诚实声明
 
-进 `contracts.yaml` 的 `frozen_text`,经 ADR-021 的 `assumptions` 通道输出:
+进 `contracts.yaml` 的 `frozen_text`,经 ADR-021 的 `assumptions` 通道输出。
+**T24 已落地 —— 文案本体在 `contracts.yaml`,本节只列键名与各键要守的那件事。**
 
 ```
-复权在框架内完成(因子法,后复权,OHLC 四列同乘)。
-复权后的价格不是当时屏幕上的价格:交易清单里的成交价从未真实成交过。
-分红按因子法折进价格,等价于【分红自动再投资且不付手续费】——
-  故净值曲线【高估】真实可得收益。现实中股息是现金落账,要手动买回并付费。
-`amount` 与 `close_before` 必须同股数基准,这是框架无法独立证实的前提;
-  方向门与量级门只能抓到部分违反。
-Volume 不随复权调整,复权后它与价格序列不再自洽。
-两条因子路径均缺席时不调价,仅按跳空阈值体检 —— 体检是提示,不是诊断。
-后复权精确保留价格【比率】,故尺度不变的策略(均线、穿越、百分比阈值)不受未来事件影响;
-  但它不保留绝对价格【水平】—— 未来的拆股会按一个常数重新缩放整段历史,
-  故在绝对价位上分支的策略(如「价格低于 50 就买入」)会因之后才发生的事件而行为不同。
-  这是一条已知的有界泄露:请写尺度不变的策略。
+ ⚠ <frozen_text.assumption_adjusted>                      复权在框架内完成(方法与方向)
+ ⚠ <frozen_text.assumption_adjusted_not_screen_price>      成交价从未真实成交过
+ ⚠ <frozen_text.assumption_dividend_reinvested>            分红再投资 → 净值【高估】
+ ⚠ <frozen_text.assumption_event_basis_unverifiable>       同股数基准:框架无法独立证实
+ ⚠ <frozen_text.assumption_volume_not_adjusted>            Volume 与价格序列不再自洽
+ ⚠ <frozen_text.assumption_no_factor_path>                 两路缺席 → 体检不是诊断
+ ⚠ <frozen_text.assumption_ratio_not_level>                保比率、不保水平的有界泄露
 ```
+
+`<...>` 均为 `contracts.yaml` 的 key —— **本块不含任何文案字面值**
+(同 ADR-021 的输出块)。*(原文把七条文案逐字写在这里,于是
+`contracts.yaml` 落地后它成了第二个复述点 ——
+`tests/test_design_binding.py::test_frozen_text_is_not_restated` 抓住了八处,
+现改为键引用。这正是该门存在的理由:**文案有且只有一个家**。)*
+
+输出顺序由 `contracts.yaml::assumption_order` 钉死,
+装配点唯一(`backtest.assumption_texts()`,ADR-035 不变 —— 它是新增函数)。
 
 **`contracts.yaml` 的 `frozen_text.assumption_adjusted` 必须被【替换】,不是被补充。**
 该键的现值断言「OHLC 由框架外预先复权、且框架不验证」—— ADR-050 之后这句话**是假的**
@@ -2425,38 +2447,43 @@ max_drawdown_pct = abs(worst) * 100.0     # 符号翻转 → 正数幅度;abs �
 ### ADR-059 · 风险指标与交易成本的诚实声明
 
 进 `contracts.yaml` 的 `frozen_text`,经 `assumptions` 通道输出。
+**T24 已落地 —— 文案本体在 `contracts.yaml`,本节只列键名与各键要守的那件事。**
 
-**夏普与回撤:**
+**滑点(七条):**
 ```
-夏普按无风险利率 rf=0 计算,因此被系统性高估。
-夏普假设输入为【日线】,年化因子固定 252;喂入周线/月线会无声放大该值
-  (周线约 2.2 倍),框架无法检测 K 线周期。
-夏普假设收益独立同分布且近似正态。真实收益有肥尾与波动聚集,此假设被违反;
-  单个极端日会同时影响分子与分母。
-样本过短时夏普是噪声而非信号 —— 30 根 K 线算出的值不可用于比较策略。
-最大回撤是【这一条历史路径】的统计量,不是风险上界。真实的最糟回撤几乎总在未来。
-最大回撤以正数表示跌幅,区间由峰值日与谷底日给出,不含恢复日。
-夏普为空值标记时表示该值在数学上未定义(不交易、或收益无波动、或样本不足 2 个收益),
-  不表示 0。
+ ⚠ <frozen_text.assumption_slippage_fixed_bps>        价差与冲击被【合并】成一个常数
+ ⚠ <frozen_text.assumption_slippage_size_blind>       规模无关:对极小单偏高、对大单严重偏低
+ ⚠ <frozen_text.assumption_slippage_open_spread>      开盘价差宽于盘中;跳空日成本双重低估
+ ⚠ <frozen_text.assumption_slippage_single_symbol>    一个 s 只服务一个标的
+ ⚠ <frozen_text.assumption_slippage_volume_coupling>  交叉引用 ADR-050:复权不调整 Volume
+ ⚠ <frozen_text.assumption_slippage_still_optimistic> 无永久冲击 → 隐含「容量无限」
+ ⚠ <frozen_text.assumption_slippage_zero_default>     默认值不代表可实现收益
 ```
 
-**滑点:**
+**夏普与回撤(七条):**
 ```
-滑点为固定 bps:买入按 Open×(1+s)、卖出按 Open×(1−s) 成交。
-  它把买卖价差与市场冲击【合并】成一个常数,二者不再可分。
-滑点与订单规模无关 —— 1 股与 10 倍日成交量收取同一比例成本。
-  真实冲击约正比于 √(订单量/日成交量),故本模型对极小单偏高、对大单严重偏低。
-  框架【不读】Volume 列(BarLike 只声明 Open 与 Date),结构上无从知晓规模
-  —— 这是边界,不是待办。
-成交发生在开盘,而开盘的有效价差系统性宽于盘中,故按盘中价差校准的 s 在此偏低。
-  高波动跳空开盘的真实滑点更差,本模型对那些天收取同一 bps
-  (与 ADR-020 的跳空无条件成交叠加,跳空日的成本被双重低估)。
-一个 s 只服务一个标的 —— 大盘股与小盘股的价差相差一个数量级以上。
-滑点与规模无关这一点,**既是接口边界也是数据完整性边界**:ADR-050 的复权不调整 Volume,
-  故即使将来要做成交量参与模型,也必须先解决 Volume 与复权价格的自洽(交叉引用 ADR-050)。
-加了滑点的净值曲线依然偏乐观:无永久冲击,故隐含「策略容量无限」;
-  暴跌开盘的集中卖出不受额外惩罚。slippage=0(默认)的曲线不代表可实现收益。
+ ⚠ <frozen_text.assumption_sharpe_rf_zero>            rf=0 → 系统性高估
+ ⚠ <frozen_text.assumption_sharpe_daily_bars>         年化因子假设日线;换粒度无声放大
+ ⚠ <frozen_text.assumption_sharpe_iid_normal>         iid + 正态被违反(肥尾、波动聚集)
+ ⚠ <frozen_text.assumption_sharpe_short_sample>       短样本是噪声,不可用于比较策略
+ ⚠ <frozen_text.assumption_sharpe_null_is_undefined>  空值 = 数学上未定义,不是 0
+ ⚠ <frozen_text.assumption_drawdown_one_path>         一条路径的统计量,不是风险上界
+ ⚠ <frozen_text.assumption_drawdown_shape>            正数表跌幅;区间不含恢复日
 ```
+
+`<...>` 均为 `contracts.yaml` 的 key —— **本块不含任何文案字面值**。
+*(原文把十四条文案逐字写在这里。两件事随 T24 一并更正:① 它成了
+`contracts.yaml` 之外的第二个复述点,现改为键引用;② **原文的草稿文案里带着
+未核验的数值** —— 年化因子 `252`、「周线约 2.2 倍」、「30 根 K 线」、
+「1 股与 10 倍日成交量」、「不足 2 个收益」。按 OQ-12 与 T24 门 8,
+落地的文案**只留方向性结论,数值一律去掉**:
+「年化因子按日线固定」「换粒度会无声放大」「几十根 K 线」「一股与十倍日成交量」
+「样本不足」。**在一个讲诚实的阶段里放一个未核实的数,正是本阶段反对的东西** ——
+这条纪律对本 ADR 自己的草稿同样适用。`tests/test_design_binding.py`
+有一条门扫描 `frozen_text` 的校准型裸数值。)*
+
+输出顺序与装配点同 ADR-055(`contracts.yaml::assumption_order`
+→ `backtest.assumption_texts()`)。
 
 > **声明只写方向性结论,不写数值。** 开盘价差宽于盘中是微观结构最稳健的实证规律之一
 > (文献脉络:Wood/McInish/Ord 1985 JF、Harris 1986、McInish & Wood 1992 JF、
@@ -2552,7 +2579,7 @@ max_drawdown_pct = abs(worst) * 100.0     # 符号翻转 → 正数幅度;abs �
 | **T21** | 复权实现(因子法,全列同乘)+ 两路仲裁 + 跳空体检 | T20 | 050, 051, 052, 054, 055 |
 | **T22** | 滑点 + I7 重写 + 可负担性修正 | — | 056, 057, 059 |
 | **T23** | 夏普 + 最大回撤 | — | 058, 059 |
-| **T24** | 声明文案归集 + 四处「未计滑点」清理 + README | T21, T22, T23 | 055, 059 |
+| **T24** | 声明文案归集 + 清理过期声明 + README | T21, T22, T23 | 055, 059, 021 |
 | **T25** | **look-ahead 对抗审计**(验证任务,不产出功能代码) | T21, T22, T23, T24 | 060 |
 
 ### T20 · 行为表契约 + 载入校验
@@ -2825,7 +2852,8 @@ max_drawdown_pct = abs(worst) * 100.0     # 符号翻转 → 正数幅度;abs �
 ### T24 · 声明文案归集 + 清理过期声明
 
 **spec**:把 ADR-055 与 ADR-059 的声明文案落进 `contracts.yaml::frozen_text`,
-经 ADR-021 的 `assumptions` 通道输出。**并清理四处已过期的「未计滑点」声明**。
+经 ADR-021 的 `assumptions` 通道输出。**并清理全部已过期的声明**
+(「未计滑点」与「预先复权 / 框架不验证」两族 —— **开放集合,以门 2 的 grep 为准**)。
 
 **验收门**:
 1. `TEST_CMD` 全绿、`LINT_CMD` 干净

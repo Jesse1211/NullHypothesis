@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import backtest
 from nullhypothesis import plot, report as report_mod
 from nullhypothesis.engine import Fill
 from nullhypothesis.run import (
@@ -64,8 +65,10 @@ def _report(results=None) -> RunReport:
         request=RunRequest(strategies=["buy_and_hold.py"], data_file="aapl.csv",
                            cash=100000.0, fee=0.0),
         results=results or [_result()],
-        assumptions=[C["frozen_text"]["assumption_adjusted"],
-                     C["frozen_text"]["assumption_market_order"]],
+        # T24:声明文案从 2 条扩到 ADR-055/059 的全集。装配点只有一个
+        # (`backtest.assumption_texts`),这里**调用它**而不是重列键名 ——
+        # 重列会让这条门在新增声明时静默失去覆盖。
+        assumptions=backtest.assumption_texts(),
     )
 
 
@@ -150,14 +153,24 @@ def test_null_gaps_render_as_na(tmp_path):
 
 
 def test_assumptions_appear_on_screen_and_in_json(tmp_path):
-    """ADR-001 那条不可验证前提的唯一守卫,不得在任何一侧静默丢失。"""
+    """ADR-021 的 `assumptions` 通道是那些不可验证前提与已知偏差在输出上的
+    唯一守卫,不得在任何一侧静默丢失。
+
+    **T24 把这条门从「两条」改为「`assumption_order` 的全集」** ——
+    ADR-055 与 ADR-059 把声明扩到 22 条,而按名字点两条的门对新增的 20 条
+    视而不见:漏印一条已知偏差不会让任何东西变红。
+    """
     rep = _report()
     text = report_mod.render(rep, tmp_path)
     payload = json.loads((tmp_path / C["filenames"]["summary_json"]).read_text())
-    for a in (C["frozen_text"]["assumption_adjusted"],
-              C["frozen_text"]["assumption_market_order"]):
-        assert a in text
-        assert a in payload["assumptions"]
+    expected = backtest.assumption_texts()
+    assert len(expected) == len(C["assumption_order"]) >= 2
+    for a in expected:
+        assert a in text, f"屏幕上缺这条声明:{a}"
+        assert a in payload["assumptions"], f"summary.json 缺这条声明:{a}"
+    # 顺序同源 —— 不只是集合相等(顺序是 ADR-055/059 的叙事顺序:
+    # 价格怎么来的 → 成交怎么发生 → 成交贵了多少 → 两个比率意味着什么)
+    assert payload["assumptions"] == expected
 
 
 def test_summary_txt_is_a_verbatim_copy_of_the_screen(tmp_path):
