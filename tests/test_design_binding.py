@@ -21,6 +21,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 DESIGN = ROOT / "DESIGN.md"
 CONTRACTS = ROOT / "contracts.yaml"
+README = ROOT / "README.md"
 
 
 def _yaml():
@@ -392,6 +393,57 @@ def test_assumption_texts_carry_no_unverified_magnitudes(c):
         + "\n".join(f"  frozen_text.{k}: {v}" for k, v in offenders.items())
         + "\n只写方向性结论。要给具体数值,须先核实文献 + 一份近期券商成本报告"
     )
+
+
+def test_readme_declaration_counts_match_assumption_order(c):
+    """README 的声明索引表写着「七条 / 一条 / 七条 / 七条」—— 那是**手写的数**。
+
+    为什么要一条门:README §「已知局限」的那张表是给人读的**索引**(它开头就
+    声明「声明本体不在本文件」,只列有哪几类、各守什么),故它不是复述点、
+    不违反 §12 的反复述纪律。但表里的条数是人手维护的,而
+    `test_frozen_text_is_not_restated` 只扫 `DESIGN.md`、且只匹配**逐字**串,
+    所以 README 的这几个数是**无门守护**的:下一次往 `assumption_order` 里
+    加一条声明,README 会静默地继续写旧数,读者按它去数屏幕上的声明就会
+    以为少印了一条。
+
+    本门只核**数**,不核文案 —— 文案的唯一家仍是 `contracts.yaml`。
+    分组按键名前缀,与 `assumption_order` 的注释所述的四段顺序一致。
+    """
+    order = c["assumption_order"]
+    groups = {
+        "adjust": [k for k in order if k.startswith("assumption_slippage_") is False
+                   and k.startswith("assumption_sharpe_") is False
+                   and k.startswith("assumption_drawdown_") is False
+                   and k != "assumption_market_order"],
+        "market": [k for k in order if k == "assumption_market_order"],
+        "slippage": [k for k in order if k.startswith("assumption_slippage_")],
+        "risk": [k for k in order if k.startswith("assumption_sharpe_")
+                 or k.startswith("assumption_drawdown_")],
+    }
+    # 分组必须是 assumption_order 的一个划分 —— 否则新增一族声明会从本门的
+    # 视野里整体消失(与 `uncovered` 那条同一个失效模式)。
+    assert sum(len(v) for v in groups.values()) == len(order), (
+        f"分组未覆盖 assumption_order 全集:{groups}"
+    )
+
+    cn = {1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "七",
+          8: "八", 9: "九", 10: "十"}
+    text = README.read_text(encoding="utf-8")
+    labels = {
+        "adjust": "**ADR-055**(复权,{n}条)",
+        "market": "**ADR-002 / ADR-020**(成交语义,{n}条)",
+        "slippage": "**ADR-059**(滑点,{n}条)",
+        "risk": "**ADR-059**(风险指标,{n}条)",
+    }
+    for key, tmpl in labels.items():
+        n = len(groups[key])
+        expected = tmpl.format(n=cn.get(n, str(n)))
+        assert expected in text, (
+            f"README 的声明索引表与 contracts.yaml::assumption_order 不符。\n"
+            f"  期望出现:{expected}(实际 {n} 条)\n"
+            "改了 assumption_order 就要同步 README 的这张表 —— 它只写条数与"
+            "主题,文案本体仍只在 contracts.yaml"
+        )
 
 
 def test_field_formats_signedness_is_semantically_correct(c):

@@ -282,8 +282,8 @@ DESIGN.md              决策账本:49 条 ADR + 11 条不变式 + 验收门
 ## 测试
 
 ```bash
-python3 -m pytest tests/ -q                       # 460 passed, 2 skipped
-cd frontend && npx tsc --noEmit && npx vitest run # 零错误 / 102 passed
+python3 -m pytest -q                              # 全绿(含 2 条设计上预期的 skip)
+cd frontend && npx tsc --noEmit && npx vitest run # 零错误 / 全绿
 ```
 
 两条 skip 是设计上预期的,各自会在相反的条件下转为执行:

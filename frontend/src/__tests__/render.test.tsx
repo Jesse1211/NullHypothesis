@@ -192,6 +192,28 @@ describe('T24 已知局限区块', () => {
     // 声明来自 props,**不是**组件里的字面量
     expect(src).toContain('assumptions.map')
   })
+
+  it('后端声明不得在组件源码里有第二份手写副本(单一归属)', () => {
+    // T24 的缺陷类型:面板曾同时手写「未计滑点」与「仅市价单…无条件执行」,
+    // 而后端的 `assumption_slippage_*` / `assumption_market_order` 又经
+    // `assumptions` 到达同一个 `<ul>` —— 同一主张在同一屏印两遍、两份各自
+    // 维护。本门把「文案有且只有一个家」变成可执行的(DESIGN.md §12 的
+    // 反复述纪律),否则下一条声明落地时同样的副本会悄悄长回来。
+    //
+    // 判据:取每条后端声明里足够长的实词片段,断言它不在**去注释后的**
+    // JSX 源码里。短片段(如「滑点」二字)会误伤合法的界面措辞,故按
+    // 分句切开并只取较长的那些。
+    const src = limitationsSource
+      .split('\n')
+      .filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l))
+      .join('\n')
+    for (const a of BASE.assumptions) {
+      for (const frag of a.split(/[。,;:()「」]/).map((f) => f.trim())) {
+        if (frag.length < 8) continue
+        expect(src.includes(frag), `面板源码里手写了后端声明的片段:${frag}`).toBe(false)
+      }
+    }
+  })
 })
 
 // ═══════════════ I9:Recharts 与响应同源 ═══════════════

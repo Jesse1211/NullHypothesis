@@ -75,6 +75,11 @@ SYMBOLS = [
     ("backtest", "create_archive_dir"),
     ("backtest", "build_report"),
     ("backtest", "write_run_json"),
+    # ADR-021 的 `assumptions` 通道的唯一装配点(T24 / ADR-055·059)。
+    # 四处门**直接调用它**取期望值(test_api.py、test_report_plot.py ×2、
+    # test_declarations_real_stack.py),故同一条自检规则二:它必须是模块级
+    # 公开名,否则实现者把它内联回 build_report,那四条门就无名可绑。
+    ("backtest", "assumption_texts"),
 ]
 
 # ADR-044 的值对象 —— T6/T7 的门要**手工构造**它们,故字段名是硬契约。

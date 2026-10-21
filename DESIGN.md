@@ -475,6 +475,17 @@ backtest.py                    # CLI 入口(ADR-017/039);【归档目录的独�
                                #     run.json 是【按运行】的元数据(含 request/assumptions),
                                #     不是绘图产物,故归此层而非 plot.py;png 路径由
                                #     plot.write() 的返回值提供
+                               #   T24 assumption_texts() -> list[str]          # ADR-021/055/059
+                               #     ADR-021 的 `assumptions` 通道的【唯一装配点】:按
+                               #     contracts.yaml::assumption_order 逐键取 frozen_text 的值。
+                               #     build_report 调它,故 CLI 与 API 两侧同源是结构性的。
+                               #     T24 的门 2/6 与前端 fixture 的生成都【直接调用它】取
+                               #     期望值(tests/test_api.py、tests/test_report_plot.py、
+                               #     tests/test_declarations_real_stack.py)—— 按 §4.5 自检
+                               #     规则二,内联进 build_report 会让那几条门结构上无法
+                               #     执行,故提为公开符号(同 compute_gaps / compute_sharpe
+                               #     的先例)。它归此层而非 report.py:assumptions 是
+                               #     RunReport 的字段,装配聚合根是 CLI 层的职责(ADR-044)
                                #   stem 唯一性校验也在此层(ADR-037/039),run() 不做
 api.py                         # 阶段二 FastAPI:暴露 app / HOST / PORT
                                #   T9  → GET /api/strategies, /api/data
@@ -2112,15 +2123,23 @@ amount / close_before  须落在合理带内
 现改为键引用。这正是该门存在的理由:**文案有且只有一个家**。)*
 
 输出顺序由 `contracts.yaml::assumption_order` 钉死,
-装配点唯一(`backtest.assumption_texts()`,ADR-035 不变 —— 它是新增函数)。
+装配点唯一:`backtest.assumption_texts()`。**该符号已按 §4.5 自检规则二写进
+ADR-035 的 `backtest.py` 块、并进 `tests/test_layout.py` 的 `SYMBOLS`**
+(T24 落地)。*(原文作「ADR-035 不变 —— 它是新增函数」。那个理由不成立:
+T20/T21 的 `cumfactors_from_*`、T23 的 `compute_sharpe` / `TRADING_DAYS_PER_YEAR`
+同样都是加性新增函数,仍一律钉死 —— 规则二管的不是「新增与否」,而是
+**门是否直接绑这个名字**。本函数被四处门直接调用取期望值,正落在规则二之内;
+不钉死则一次内联或改名就能让那四条门无名可绑。T24 更正)*
 
 **`contracts.yaml` 的 `frozen_text.assumption_adjusted` 必须被【替换】,不是被补充。**
-该键的现值断言「OHLC 由框架外预先复权、且框架不验证」—— ADR-050 之后这句话**是假的**
+**T24 已落地 —— 该键的现值即上表第一行的「复权在框架内完成」。** 以下是替换的理由,
+记录为历史:该键**此前**的值断言「OHLC 由框架外预先复权、且框架不验证」——
+ADR-050 之后这句话**是假的**
 (框架自己做复权,且 ADR-051/054 确实在验证)。若只新增本 ADR 的文案而不退役它,
 `summary.txt` 会在相邻两行印出**两条互相矛盾的复权声明** —— 正是本阶段要消灭的缺陷类型。
 它被 ADR-021 的汇总块输出、并被 §5/§12 的多条门与
 `tests/test_design_binding.py::test_frozen_text_is_not_restated` 断言,
-故替换它是一处**破坏性**变更,须由 T24 连同那些门一并更新(T24 门 2)。
+故替换它是一处**破坏性**变更,已由 T24 连同那些门一并更新(T24 门 2)。
 
 **分红再投资的高估是本 ADR 最重要的一条声明。** 因子法把这笔复利**无偿送给了策略**,
 正是本 epic 要挤掉的那类「假的赚钱」。本阶段**接受**它,因为真实现金流要动 `Account`、

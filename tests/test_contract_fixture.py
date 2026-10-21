@@ -29,6 +29,9 @@ from fastapi.testclient import TestClient
 import api
 
 ROOT = Path(__file__).resolve().parent.parent
+# 与 14 个同族测试模块一致:契约在**模块级**载入一次(tests/test_api.py、
+# tests/test_layout.py、tests/test_report_plot.py…)。
+C = yaml.safe_load((ROOT / "contracts.yaml").read_text(encoding="utf-8"))
 
 # T10 与 T12 是 DAG 兄弟(都只依赖 T9),T10 可能先跑,那时 `frontend/`
 # 还不存在。故本门用 `mkdir(parents=True)` 创建该路径 —— **这是 T10 唯一
@@ -160,7 +163,5 @@ def test_fixture_carries_the_fields_t13_consumes():
     # T24:声明从 2 条扩到 ADR-055/059 的全集。本门按 `assumption_order`
     # 的长度断言,而不是一个裸的 `2` —— 后者会在新增声明时变红却毫无信息,
     # 更坏的是诱使人把它改成新的裸数字(下一次新增又红)。
-    order = yaml.safe_load(
-        (ROOT / "contracts.yaml").read_text(encoding="utf-8")
-    )["assumption_order"]
+    order = C["assumption_order"]
     assert len(f["assumptions"]) == len(order) > 2

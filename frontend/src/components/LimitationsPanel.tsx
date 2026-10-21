@@ -4,9 +4,11 @@
  * 看曲线时无法忽略它。它是框架那些不可验证前提与**已知偏差**在界面上的
  * 唯一守卫(ADR-021 的 `assumptions` 通道 + ADR-002 的 T+1 无条件成交)。
  *
- * 本区块里**只有一条**是本界面自己的陈述(「不支持做空 / 杠杆 / 限价 /
- * 止损」—— §0 的明确非目标),其余全部来自后端的 `assumptions`,**逐字**
- * 渲染。本界面不含任何数字,故不违反 ADR-025 / I8。
+ * 区块里的条目分两类来源:**本界面自己的陈述**(成交机制那一行 + 最大跳空
+ * 那一行 + §0 的明确非目标那一行)与**后端 `assumptions` 的逐字渲染**。
+ * 后者**逐字**照印,不改写、不省略、不补数。本界面除后端给的
+ * `max_gap_pct` / `max_gap_date` 两个字段外不显示任何数字、不做任何算术,
+ * 故不违反 ADR-025 / I8。
  *
  * ═══ T24 / ADR-055 · ADR-059 的更新 ═══
  * 原文此处写死「**未计滑点** · 不支持做空 / 杠杆 / 限价 / 止损」。
@@ -18,13 +20,23 @@
  * 同 `frozen_text.assumption_adjusted` 的处置(ADR-055)。
  * 原文注释说「四条里有两条来自后端」—— 条数不再是常数(由
  * `contracts.yaml::assumption_order` 决定),故改为按来源描述。
+ *
+ * **同一条理由也退役了成交语义那半句。** 原文的第一条写「…仅市价单,T 日意图
+ * 在 T+1 开盘**无条件执行**(ADR-002 / ADR-020)」,而
+ * `frozen_text.assumption_market_order`(「仅支持市价单。T 日意图在 T+1 开盘
+ * 无条件执行。」)现在经 `assumptions` 通道到达同一个 `<ul>` —— 同一主张在同
+ * 一屏印两遍、且两份各自维护,正是本次要消灭的缺陷类型(与「未计滑点」同因)。
+ * 故此处只留**后端文案没说的那部分**:决策与成交的时点机制
+ * `T 日 Close → T+1 日 Open`(ADR-002 的结构性保证,非假设声明,不在
+ * `assumptions` 里)。
  */
 
 import type { Summary } from '../types'
 import { orNull, percent } from '../format'
 
 export interface LimitationsPanelProps {
-  /** 后端逐字给的两条假设(ADR-021),不得改写。 */
+  /** 后端逐字给的全部声明(ADR-021 的通道;条数由 `assumption_order` 决定,
+   *  **不是常数**),不得改写、不得省略。 */
   assumptions: string[]
   /** 取最大跳空用 —— 直接读字段,不自己算。 */
   summary: Summary
@@ -37,8 +49,8 @@ export default function LimitationsPanel({ assumptions, summary }: LimitationsPa
       <h4>这条曲线的已知局限 · 由设计决定,非遗漏</h4>
       <ul>
         <li>
-          成交假设 <code>T 日 Close 决策 → T+1 日 Open 成交</code>,仅市价单,
-          T 日意图在 T+1 开盘<b>无条件执行</b>(ADR-002 / ADR-020)
+          成交时点 <code>T 日 Close 决策 → T+1 日 Open 成交</code>(ADR-002)
+          {' '}—— 这笔成交的订单类型与执行语义见下方后端声明
         </li>
         <li>
           最大单日跳空{' '}
@@ -47,11 +59,12 @@ export default function LimitationsPanel({ assumptions, summary }: LimitationsPa
           </code>
           {' '}—— 该笔成交实际发生在与决策时相差这么多的价位上
         </li>
-        {/* 后端逐字给的两条(ADR-021)—— 不改写、不省略 */}
+        {/* 后端逐字给的全部声明(ADR-021)—— 不改写、不省略、不截断。
+            条数由 `contracts.yaml::assumption_order` 决定(T24 起为全集)。 */}
         {assumptions.map((a) => (
           <li key={a} data-assumption={a}>{a}</li>
         ))}
-        {/* 本界面自己的唯一一条:§0 的明确非目标。**滑点已不在此列** ——
+        {/* §0 的明确非目标。**滑点已不在此列** ——
             它由 ADR-056 实现、由 ADR-059 的声明经上面的 `assumptions`
             逐字声明(T24)。 */}
         <li>
