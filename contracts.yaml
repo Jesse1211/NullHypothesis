@@ -94,6 +94,23 @@ rounding:
   fields: [final_equity, initial_cash, total_return_pct, max_gap_pct, mean_abs_gap_pct,
            sharpe, max_drawdown_pct]
 
+# ──────────────────── 阈值(T21 / ADR-051 · 052 · 054)────────────────────
+# 为什么阈值在这里而不是写成 `data.py` 的裸字面量:T21 门 12 的原话
+# 「阈值不可写成裸字面量,也不可用 ADR-054 的『落在合理带内』那种散文;
+# 参照 OQ-11 对跳空阈值的处置」。三个值各自有一条 ADR / OQ 钉死它。
+thresholds:
+  # OQ-11:跳空体检阈值,默认 20%,**构建期不得改**。
+  # 张力不可消除:2:1 拆股 = −50%、4:1 = −75%,但真实暴跌也能到 −20%。
+  # 故定为**提示而非错误**,宁可误报(ADR-051)。
+  gap_suspicion_pct: 20.0
+  # ADR-052:两路累积因子的相对偏差容差。**取 1e-4,不取 1e-6** ——
+  # 厂商数据自带浮点噪声(Tiingo 把 7:1 存成 7.000007000007001,
+  # 相对偏差实测 1.0e-6),1e-6 会让这条门几乎必红。
+  factor_agreement_tol: 0.0001
+  # ADR-054 门二:单笔现金分红 / close_before 超过此比值 → 响亮失败。
+  # 抓 Yahoo / Sharadar 那类基准错导致的 5 倍膨胀(膨胀后股息率会荒谬)。
+  dividend_yield_suspicion: 0.25
+
 # ───────────────────────────── 正则 ─────────────────────────────
 patterns:
   run_id: "^\\d{8}-\\d{6}(-\\d+)?$"
@@ -441,6 +458,21 @@ fixtures:
     expect_ratios: [null, 5.0, null]
     expect_amounts: [1.50, null, 0.52]
     filename: "events.csv"
+    # ── 以下由 T21 加性追加 ──
+    # T20 原先把这份行为表配到 `data/synthetic.csv` 上。T20 **不调价**,
+    # 故那是一份纯格式 fixture,能通过全部格式校验;但 `synthetic.csv` 在
+    # 2015-06-18 **没有任何拆股**(实测收盘 36.02 → 36.98,+2.7%),
+    # 于是 T21 的**方向门**(ADR-054 门一)正确地把它判为「约定写反」。
+    #
+    # **这正是 T20 自己 blindSpots 预言的那件事**:「行为表写错一个 `ratio`
+    # 而通过全部格式校验是可能的,**那由 T21 的方向门抓**」。
+    # 故修的是 fixture(给它一份价格确实含该拆股的数据文件),
+    # **不是**放宽方向门 —— 门抓到了一个真实的不一致。
+    price_filename: "events_prices.csv"
+    # 价格文件在拆股日**确实**跌到 1/ratio;两笔分红的 amount/close_before
+    # 都远低于 `thresholds.dividend_yield_suspicion`(0.015 与 0.0052)。
+    price_close_before_split: 100.0
+    price_close_on_split: 20.0
 
   # 门 10:行为表是【标的的属性】,可能覆盖比价格切片更长的区间 →
   # 区间外的事件被忽略 + 提示(不是错误)。
@@ -448,6 +480,85 @@ fixtures:
     before_range: "2014-06-10"     # 早于价格序列首日
     after_range: "2016-07-20"      # 晚于价格序列末日
     expect_kept_count: 1           # 只剩区间内那一笔
+
+  # ───────────── T21 · 因子法复权(ADR-050 / 051 / 052 / 053 / 054)─────────────
+  # 本块是 T21 全部门的期望值来源。测试只引用 key,不复述字面量。
+  # 每一项都由 tests/test_contracts.py 重新算出来(本文件开头的规则)。
+
+  # ADR-053 的**实测段**:分红在前、拆股在后(最常见的次序)。
+  # 这是 T21 门 6 的全部三个子门共用的 fixture —— 缺第三个子门
+  # (总收益)则 H2 类缺陷(close_before 读成已调整值)不可观测。
+  adr053_close_before_basis:
+    # 原始(未经任何因子调整)收盘序列 —— ADR-053 实测段的四个值
+    raw_closes: [100.00, 98.50, 100.00, 20.00]
+    dates: ["2015-05-12", "2015-05-13", "2015-06-17", "2015-06-18"]
+    dividend_date: "2015-05-13"
+    dividend_amount: 1.50
+    split_date: "2015-06-18"
+    split_ratio: 5.0
+    # close_before ≔ 除息日【前一交易日】的【原始】收盘价
+    expect_close_before: 100.00
+    expect_f_dividend: 0.985        # 1 − 1.50/100.00
+    expect_f_split: 0.2             # 1/5.0
+    # 门 6(b):05-12 复权后收盘。**拒绝** 18.500(用已拆股调整的收盘做分母)
+    expect_adjusted_close_first: 19.700
+    reject_adjusted_close_first: 18.500   # 1 − 1.50/20.00 = 0.925 的错误读法
+    # 门 6(c):与「除息日收盘再投资」的地面真值逐位吻合 ——
+    # 故本条同时验证 ADR-055 的「因子法 ≡ 自动再投资」声明为真。
+    expect_total_return: 0.015228426395939021   # 20.00/19.70 − 1
+    ground_truth_terminal: 101.5228426395939    # (1 + 1.50/98.50) × 5 × 20.00
+
+  # ADR-050:后复权 + 「严格晚于 t」的累积规则。
+  adr050_cumfactor:
+    last_row_cumfactor: 1.0        # 后复权:最新一行恒为 1.0
+    # 门 4:构造两个事件,中间区段的因子是【后一个事件】的因子,
+    # 而非两者之积 —— 除权日当根 bar 不被自己的事件调整。
+    split_a_ratio: 2.0
+    split_b_ratio: 5.0
+    expect_segment_before_a: 0.1   # (1/2)×(1/5) —— 两个事件都晚于它
+    expect_segment_between: 0.2    # 仅 1/5 —— 只有 B 晚于它(不是 0.1)
+    reject_segment_between: 0.1    # 把除权日当根 bar 也算进去的错误实现
+
+  # 门 5:split 因子 = 1/ratio。合股必须**放大**历史价。
+  adr050_split_factor:
+    forward_4_for_1: 4.0
+    expect_factor_4_for_1: 0.25
+    reverse_1_for_8: 0.125
+    expect_factor_1_for_8: 8.0     # 放大,不是缩小
+
+  # 门 11:ADR-054 的方向门 —— 本特性价值最高的一条。
+  # close[ex]/close[ex-1] ≈ 1/ratio;唯一能抓到约定写反(16 倍误差)的机制。
+  adr054_direction_gate:
+    true_ratio: 4.0                # 价格确实跌到 1/4
+    reversed_ratio: 0.25           # 约定 B 写法 —— 必须报错
+    # 方向门的容差:厂商有浮点噪声,**不可按精确值断言**(ADR-054 原话)
+    tol: 0.05
+
+  # 门 12:量级门的**肯定 + 否定**用例。只有肯定用例时,
+  # 一个「对每笔分红都报错」的实现也能通过。
+  adr054_dividend_magnitude:
+    close_before: 100.0
+    reject_amount: 30.0            # 比值 0.30 > 阈值 0.25 → 报错
+    accept_amount: 24.0            # 比值 0.24 < 阈值 0.25 → 通过
+    # 门 13:amount >= close_before → 报错(因子 <= 0 会把历史价归零或变号)
+    zero_factor_amount: 100.0
+
+  # 门 10:仲裁 tol 不可取 1e-6 —— Tiingo 把 7:1 存成这个值。
+  adr052_arbitration:
+    noisy_ratio: 7.000007000007001
+    clean_ratio: 7.0
+    # 实测相对偏差:1e-4 容得下,1e-6 会误报
+    measured_rel_dev: 1.0000000000565112e-06
+
+  # 门 15:体检阈值的**两侧**都要门住(浮点边界,不可只测一侧)。
+  adr051_gap_health_check:
+    # (a) 5:4 拆股 —— round 后恰为 −20.0,钉死运算符为 `>=`;写成 `>` 则必红
+    boundary_ratio: 1.25
+    boundary_gap_pct: -20.0
+    # (b) −15% 跳空 → 断言**无**提示
+    quiet_gap_pct: -15.0
+    # 门 14:−75% 跳空(4:1 拆股的签名)→ 发出提示,且价格**未被调整**
+    loud_gap_pct: -75.0
 
 # ═══════════════════════ 门的可执行性前提 ═══════════════════════
 # 第 8 轮发现的第四类缺陷:三条自检规则都在审查「断言」,没有任何一条

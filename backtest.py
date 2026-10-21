@@ -188,7 +188,7 @@ def _validate(ns: argparse.Namespace) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    from nullhypothesis.data import load_csv, load_events
+    from nullhypothesis.data import load_csv
     from nullhypothesis.run import RunRequest, run
     from nullhypothesis import plot, report as report_mod
 
@@ -202,12 +202,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _exit_code("invalid_cli_args") if e.code else _exit_code("ok")
 
     try:
-        df = load_csv(ns.data)
         # ADR-053 / T20:行为表经**独立文件**载入与校验。
-        # **本任务不做价格调整** —— `events` 只是一个经校验的事件序列,
-        # 调价是 T21 的事。故这里载入即止,`df` 未被触碰。
-        if ns.events is not None:
-            load_events(ns.events, price_dates=df["Date"])
+        # T21 / ADR-050:**复权在 `load_csv` 之内**完成(边界迁移)——
+        # 行为表路径直接交给它,由它在价格日期就绪后调 `load_events`。
+        # 这一层**不**乘价格:下游无从分辨价格是否被调整过,
+        # 那是 ADR-050 的结构性保证,不是纪律。
+        df = load_csv(ns.data, events=ns.events)
     except DataValidationError as e:
         print(f"❌ {e}", file=sys.stderr)
         return _exit_code("data_validation")

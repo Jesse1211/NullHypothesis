@@ -499,6 +499,20 @@ api.py                         # 阶段二 FastAPI:暴露 app / HOST / PORT
 nullhypothesis/
   __init__.py                  # T1 建(空文件即可)
   data.py                      # T1  load_csv(path) -> pd.DataFrame
+                               #   T20 load_events(path, *, price_dates=None)
+                               #         -> list[CorporateEvent]            # ADR-053
+                               #   T21 load_csv(path, *, events=None) -> pd.DataFrame
+                               #     `events` 是【仅关键字且可选】的加性参数(ADR-050 的
+                               #     边界迁移:复权在 load_csv 之内)。`path` 仍是第一个
+                               #     位置参数,`load_csv(path)` 的调用形态【未变】——
+                               #     故本行钉死的签名契约未被破坏(T21 门 18)
+                               #   T21 cumfactors_from_events(df, events, file_str) -> list[float]
+                               #   T21 cumfactors_from_adj_close(df, adj_close) -> list[float]|None
+                               #     两者都是【累积因子序列】的生产者。T21 的门 4
+                               #     (「严格晚于 t」)与门 9/10(仲裁)要直接采样这个
+                               #     序列本身、而非调整后的价格 —— 按 §4.5 自检规则二,
+                               #     内联它们会让那几条门结构上无法执行,故提为公开符号
+                               #   T21 UnadjustedPriceWarning                 # ADR-051 的体检通道
   strategy.py                  # T2  Strategy 基类 + load_strategy(path)
   account.py                   # T3  Account:
                                #       .cash -> float        (只读属性)
@@ -866,6 +880,7 @@ class EquityPoint:        # 四个字段。T5 的 I3 逐日对账读 cash/shares
 **变更说明**:
 - ADR-012(floor 取整)与手续费中的「成交额」原在 T3,但 `目标股数 = floor(w × 可投资产 / Open)` 属 ADR-014/016(T4),而 T3 只依赖 T1、无法产生成交价 —— **这是顺序错误**。现 ADR-012 移至 T4;T3 只做 `Account.apply(Fill)` 等原语,`Fill` 由调用方构造。
 - ADR-004(不用 Adj Close)原未分配给任何任务,但它是 T1 的活约束(loader 必须不读该列)。
+  **ADR-050(T21)已把它全部作废** —— 该列现为因子路径一的来源,归属随之移到 T21。
 - ADR-022 原只在 T2,但其「不写输出文件 / 非零退出」是 T8 的职责。
 
 ---
@@ -941,7 +956,13 @@ CONTRACT_CMD = python3 -m pytest tests/test_contracts.py -q
 - 每条 ADR-019 的失败情形各有一个测试,断言**异常类型 + 消息含行号/列名**:缺列、NaN、价格 `<= 0`、重复日期、空文件、仅表头
 - 日期乱序 → 断言已排序、发出提示(不抛错)、**且 `df.index` 为 `0..n-1` 连续**
 - 单行 CSV → 断言加载成功(ADR-023)
-- **ADR-004**:CSV 含 `Adj Close` 列时 → 断言该列**不被读取**(不影响任何计算),引擎只用 OHLC
+- ~~**ADR-004**:CSV 含 `Adj Close` 列时 → 断言该列**不被读取**(不影响任何计算),引擎只用 OHLC~~
+  **superseded by ADR-050(T21)。** 该列现在是**因子路径一**的来源
+  (`factor_t = AdjClose_t / Close_t`),读取顺序为「**先读取用于算因子,再从返回帧中移除**」。
+  这三条老门已按 T21 门 16 **反写**(`tests/test_data.py`:
+  `..._is_absent_from_the_returned_frame` / `..._does_change_the_result` /
+  `..._garbage_falls_back_to_no_adjustment`)。仍然成立的只有 ADR-001 主张 A 的
+  残留部分:该列**不出现在返回的 DataFrame 里**。
 - 所有异常断言类型为 `DataValidationError`(ADR-040)且 `.file`/`.row`/`.column` 字段正确
 - **真实数据状态**:测试须用**真实写到磁盘的 CSV 文件**,非内存 DataFrame
 - `blindSpots` 须声明:未测试的 CSV 变体(编码、BOM、千分位分隔符、CRLF)

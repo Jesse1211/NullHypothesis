@@ -599,24 +599,73 @@ def _real_events_csv() -> str:
     return rows_to_csv(rows)
 
 
+def _real_prices_csv() -> str:
+    """与上面那份行为表**价格一致**的多年价格文件(T21 加性追加)。
+
+    **为什么 T20 的这条门需要自己的价格文件。** T20 原先把这份行为表配到
+    `data/synthetic.csv` 上;T20 **不调价**,故那是一份纯格式 fixture。
+    但 `synthetic.csv` 在拆股日 `2015-06-18` **没有任何拆股**(实测收盘
+    36.02 → 36.98,+2.7%),于是 T21 的**方向门**(ADR-054 门一,
+    `close[ex]/close[ex-1] ≈ 1/ratio`)正确地把那个 `ratio=5.0` 判为
+    「约定写反」并报错。
+
+    **这正是 T20 自己 blindSpots 预言的那件事** ——
+    「行为表写错一个 `ratio` 而通过全部格式校验是可能的,**那由 T21 的
+    方向门抓**」。故这里修的是 **fixture**(给它一份价格确实含该拆股的
+    数据文件),**不是**放宽方向门:门抓到了一个真实的不一致。
+
+    价格按事件构造,使三条 ADR-054 的门全部**成立**:
+      * 拆股日收盘确实跌到 1/5(100.0 → 20.0)→ 方向门过;
+      * 两笔分红的 `amount/close_before` 分别是 0.015 与 0.0052,
+        远低于 `thresholds.dividend_yield_suspicion` → 量级门过。
+    """
+    before, on = REAL["price_close_before_split"], REAL["price_close_on_split"]
+    div1, div2 = REAL["expect_dates"][0], REAL["expect_dates"][2]
+    split_day = REAL["expect_dates"][1]
+    # 逐根给出 (日期, 收盘)。OHLC 取同一个值即可 —— 本门只对账事件序列,
+    # 序关系由 T21 自己的全列同乘门穷举断言。
+    bars = [
+        ("2015-05-12", before),          # 除息日前一交易日 → close_before
+        (div1,         98.50),           # 除息 1.50(1.50/100 = 0.015)
+        ("2015-06-17", before),          # 拆股日前一交易日
+        (split_day,    on),              # 5:1 拆股:100.0 → 20.0,方向门过
+        ("2016-02-03", on),              # 第二笔分红的前一交易日
+        (div2,         19.48),           # 除息 0.52(0.52/20 = 0.026)
+    ]
+    rows = [
+        f"{day},{c},{c},{c},{c},1000" for day, c in bars
+    ]
+    return "\n".join(["Date,Open,High,Low,Close,Volume", *rows]) + "\n"
+
+
 @pytest.fixture
 def real_events_file():
-    """把行为表写进真实的 `data/`(API 只读自那里,ADR-027),跑完即删。"""
+    """把行为表**与配套价格文件**写进真实的 `data/`(API 只读自那里,
+    ADR-027),跑完即删。"""
     path = ROOT / "data" / REAL["filename"]
+    prices = ROOT / "data" / REAL["price_filename"]
     path.write_text(_real_events_csv(), encoding="utf-8")
+    prices.write_text(_real_prices_csv(), encoding="utf-8")
     try:
         yield path
     finally:
         path.unlink(missing_ok=True)
+        prices.unlink(missing_ok=True)
 
 
-def test_real_events_table_dates_are_inside_the_synthetic_range():
-    """前提门:REAL_STACK_GATE 的三个事件日必须落在真实价格序列的区间内。
+def test_real_events_table_dates_are_inside_the_synthetic_range(tmp_path):
+    """前提门:REAL_STACK_GATE 的三个事件日必须落在**配套价格文件**的区间内。
 
     没有这条门,把 `expect_dates` 改到区间外会让 CLI↔API 对账门**仍然绿**
     (两侧都解析出空序列)—— 那正是「门指向的地方才有注意力」那类缺陷。
+
+    T21 把锚从 `synthetic.csv` 换成 `price_filename` —— 行为表现在配的是
+    那份**价格与事件一致**的文件(见 `_real_prices_csv` 的理由)。
+    事件日仍必须落在它的区间内,否则门 10 的区间过滤会把事件悄悄丢掉。
     """
-    prices = load_csv(ROOT / "data" / DATA_FILE)
+    path = tmp_path / REAL["price_filename"]
+    path.write_text(_real_prices_csv(), encoding="utf-8")
+    prices = load_csv(path)
     lo, hi = prices["Date"].min().date(), prices["Date"].max().date()
     for day in REAL["expect_dates"]:
         parsed = date.fromisoformat(day)
@@ -635,8 +684,11 @@ def test_cli_and_api_parse_the_same_event_sequence(real_events_file, tmp_path):
     断言两侧解析出**同一个**事件序列(CLI↔API 对账,与 T10 同构)。
 
     对账的锚是 `run.json` / 响应里 `request.events` 的**文件名**,加上
-    两侧**在同一个进程外**再解析一次得到的事件序列 —— 本任务不调价,
-    故 `summary` 不会因行为表而变,`request.events` 是唯一的可观测投影。
+    两侧**在同一个进程外**再解析一次得到的事件序列。
+
+    T21 把数据文件从 `synthetic.csv` 换成 `price_filename`(价格与事件
+    一致的那份)—— 复权落地后,方向门会正确地拒绝「行为表声明了一次
+    价格数据里并不存在的拆股」。换 fixture 而非放宽门,见 `_real_prices_csv`。
     """
     from fastapi.testclient import TestClient
 
@@ -646,7 +698,7 @@ def test_cli_and_api_parse_the_same_event_sequence(real_events_file, tmp_path):
     out_dir = tmp_path / "cli-out"
     proc = subprocess.run(
         [sys.executable, "backtest.py",
-         "--data", f"data/{DATA_FILE}",
+         "--data", f"data/{REAL['price_filename']}",
          "--strategy", f"strategies/{STRAT}",
          "--events", f"data/{REAL['filename']}",
          "--out", str(out_dir)],
@@ -667,7 +719,7 @@ def test_cli_and_api_parse_the_same_event_sequence(real_events_file, tmp_path):
     api.OUT_DIR = api_out
     try:
         response = client.post("/api/run", json={
-            "strategies": [STRAT], "data_file": DATA_FILE,
+            "strategies": [STRAT], "data_file": REAL["price_filename"],
             "cash": 100000.0, "fee": 0.0,
             "events": REAL["filename"],
         })
@@ -685,7 +737,7 @@ def test_cli_and_api_parse_the_same_event_sequence(real_events_file, tmp_path):
     assert api_run_json["request"]["events"] == REAL["filename"]
 
     # ── 对账 ②:两侧载入的事件序列**逐字段相同**,且等于钉死的期望值 ──
-    prices = load_csv(ROOT / "data" / DATA_FILE)
+    prices = load_csv(ROOT / "data" / REAL["price_filename"])
     parsed = load_events(
         ROOT / "data" / REAL["filename"], price_dates=prices["Date"]
     )

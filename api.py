@@ -32,7 +32,7 @@ import backtest
 import nullhypothesis.plot as plot
 import nullhypothesis.report as report_mod
 import nullhypothesis.run as nh_run
-from nullhypothesis.data import load_csv, load_events
+from nullhypothesis.data import load_csv
 from nullhypothesis.errors import DataValidationError, StrategyError
 
 __all__ = [
@@ -253,12 +253,15 @@ def execute_run(body: RunRequestBody) -> dict[str, Any]:
 
 def _execute_run_locked(body: RunRequestBody) -> dict[str, Any]:
     """**调用方必须已持有 `RUN_LOCK`。** T10 的门对本函数打桩。"""
-    df = load_csv(DATA_DIR / body.data_file)
-    # ADR-053 / T20:行为表载入与校验。**本任务不做价格调整** —— `df` 未被
-    # 触碰;调价是 T21 的事。失败抛 DataValidationError,由 post_run 映射
-    # 成 `DATA_VALIDATION`(ADR-031),与价格 CSV 的失败同一通道。
-    if body.events is not None:
-        load_events(DATA_DIR / body.events, price_dates=df["Date"])
+    # ADR-053 / T20:行为表载入与校验。
+    # T21 / ADR-050:**复权在 `load_csv` 之内**完成 —— 行为表路径直接交给它。
+    # 失败抛 DataValidationError,由 post_run 映射成 `DATA_VALIDATION`
+    # (ADR-031),与价格 CSV 的失败同一通道;T21 追加的五种失败情形
+    # (方向门 / 量级门 / 因子 <= 0 / 首根 bar / 两路不一致)走同一个出口。
+    df = load_csv(
+        DATA_DIR / body.data_file,
+        events=None if body.events is None else DATA_DIR / body.events,
+    )
     paths = [STRATEGIES_DIR / s for s in body.strategies]
     results = nh_run.run(
         paths, df, cash=body.cash, fee=body.fee, slippage=body.slippage
