@@ -46,7 +46,11 @@ def format_field(name: str, value: Any) -> str:
     if value is None:
         return c["formats"]["null_display"]
     spec = c["formats"][c["field_formats"][name]]
-    if name in ("start", "end", "max_gap_date"):
+    if name in (
+        "start", "end", "max_gap_date",
+        # ADR-058 的两个回撤日期 —— 同样由后端给成 YYYY-MM-DD,不参与舍入
+        "max_drawdown_peak_date", "max_drawdown_trough_date",
+    ):
         return str(value)  # 后端已给 YYYY-MM-DD(formats.date)
     return spec.format(value)
 
@@ -74,6 +78,27 @@ def _gap_block(s: Summary) -> list[str]:
     return [
         f" 最大跳空      {format_field('max_gap_pct', s.max_gap_pct)}  {date}",
         f" 平均绝对跳空  {format_field('mean_abs_gap_pct', s.mean_abs_gap_pct)}",
+    ]
+
+
+def _risk_block(s: Summary) -> list[str]:
+    """ADR-058 的两个风险指标。**纯渲染** —— 四个值都已由 `run.py` 算好。
+
+    `sharpe` 用 `formats.ratio`(`{:.2f}`),**不是** `percent_signed` ——
+    它是裸比率,后者会给它附加一个 `%`。
+    `max_drawdown_pct` 用 `percent_unsigned`:ADR-058 定它为**正数幅度**,
+    带符号格式化器会引入 `+`/`-` 双重负号的显示 bug。
+
+    夏普为 `null` 时按 `formats.null_display` 显示 —— 表示该值在数学上
+    **未定义**(不交易、或收益无波动、或样本不足 2 个收益),**不表示 0**
+    (ADR-059 的声明逐字覆盖这一点)。
+    """
+    peak = format_field("max_drawdown_peak_date", s.max_drawdown_peak_date)
+    trough = format_field("max_drawdown_trough_date", s.max_drawdown_trough_date)
+    return [
+        f" 夏普比率      {format_field('sharpe', s.sharpe)}",
+        f" 最大回撤      {format_field('max_drawdown_pct', s.max_drawdown_pct)}"
+        f"  {peak} ~ {trough}",
     ]
 
 
@@ -107,6 +132,9 @@ def _screen_text(report: RunReport) -> str:
         if len(report.results) > 1:
             out.append(f" ▸ {r.strategy}")
         out.extend(_summary_block(r.summary))
+        # 风险指标按【策略】打印 —— 与跳空不同,夏普与回撤是**策略的**性质
+        # (从 equity 算,不从 close 算),故每条策略各有一份。
+        out.extend(_risk_block(r.summary))
         if i < len(report.results) - 1:
             out.append("")
 
@@ -142,6 +170,15 @@ def _summary_json(s: Summary) -> dict[str, Any]:
         "max_gap_pct": s.max_gap_pct,
         "max_gap_date": s.max_gap_date,
         "mean_abs_gap_pct": s.mean_abs_gap_pct,
+        # ── ADR-058 的四个字段 ── **纯转录,零算术**
+        #
+        # ADR-044 规定本模块只渲染不计算:这四个值已由 `run.py` 的 `Summary`
+        # 构建处算完并取整,这里**只搬运**。任何乘除加减出现在本文件里都是
+        # 违章 —— 包括「顺手」把 `max_drawdown_pct` 取个绝对值。
+        "sharpe": s.sharpe,
+        "max_drawdown_pct": s.max_drawdown_pct,
+        "max_drawdown_peak_date": s.max_drawdown_peak_date,
+        "max_drawdown_trough_date": s.max_drawdown_trough_date,
     }
 
 

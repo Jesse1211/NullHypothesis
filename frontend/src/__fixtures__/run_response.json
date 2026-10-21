@@ -1,5 +1,5 @@
 {
-  "run_id": "20261005-114310",
+  "run_id": "20261021-122614",
   "results": [
     {
       "strategy": "buy_and_hold",
@@ -12607,9 +12607,13 @@
         "trade_count": 1,
         "max_gap_pct": 1.47,
         "max_gap_date": "2018-04-11",
-        "mean_abs_gap_pct": 0.32
+        "mean_abs_gap_pct": 0.32,
+        "sharpe": 0.45,
+        "max_drawdown_pct": 79.36,
+        "max_drawdown_peak_date": "2015-10-27",
+        "max_drawdown_trough_date": "2020-07-17"
       },
-      "png_path": "out/20261005-114310/buy_and_hold_equity.png"
+      "png_path": "out/20261021-122614/buy_and_hold_equity.png"
     },
     {
       "strategy": "ma_cross",
@@ -25697,12 +25701,16 @@
         "trade_count": 49,
         "max_gap_pct": 1.47,
         "max_gap_date": "2018-04-11",
-        "mean_abs_gap_pct": 0.32
+        "mean_abs_gap_pct": 0.32,
+        "sharpe": 0.49,
+        "max_drawdown_pct": 61.16,
+        "max_drawdown_peak_date": "2015-10-27",
+        "max_drawdown_trough_date": "2020-10-21"
       },
-      "png_path": "out/20261005-114310/ma_cross_equity.png"
+      "png_path": "out/20261021-122614/ma_cross_equity.png"
     }
   ],
-  "comparison_png_path": "out/20261005-114310/comparison.png",
+  "comparison_png_path": "out/20261021-122614/comparison.png",
   "assumptions": [
     "OHLC 已预先复权(框架不验证)",
     "仅支持市价单。T 日意图在 T+1 开盘无条件执行。"

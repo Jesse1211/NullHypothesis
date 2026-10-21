@@ -37,6 +37,7 @@ from nullhypothesis.errors import DataValidationError, StrategyError
 
 __all__ = [
     "app",
+    "SummaryModel",
     "HOST",
     "PORT",
     "RUN_LOCK",
@@ -173,6 +174,41 @@ def list_data() -> list[str]:
 
 
 # ═══════════════════════ T10 · 跑一次 ═══════════════════════
+
+
+class SummaryModel(BaseModel):
+    """`summary` 块的 pydantic 模型 —— **ADR-038 的单一真相来源**。
+
+    `frontend/src/types.ts` 的 `Summary` 接口逐字段镜像本模型。
+
+    本模型是**契约声明**:响应体由 `report_mod._summary_json` 产出裸标量
+    (ADR-044 的渲染投影),这里钉死字段名、类型与可空性,使「新字段止步于
+    `summary.json`、到不了 API 与界面」这类漏装在类型层面可被发现。
+
+    **所有金融量都是已完成全部算术的标量**(ADR-025/I8):`total_return_pct`
+    与 `max_drawdown_pct` 已乘 100,前端只追加 `%`;`sharpe` 是**裸比率,
+    不乘 100、不带单位**。
+    """
+
+    start: str
+    end: str
+    bars: int
+    initial_cash: float
+    final_equity: float
+    total_return_pct: float
+    trade_count: int
+    max_gap_pct: float | None = None
+    max_gap_date: str | None = None
+    mean_abs_gap_pct: float | None = None
+    # ── ADR-058 追加的四个字段(末尾)──
+    #
+    # `sharpe` 为 `None` 表示该值在**数学上未定义**(不交易、或收益无波动、
+    # 或样本不足 2 个收益),**不表示 0**(ADR-059 的声明逐字覆盖这一点)。
+    # 四个字段均可空 ⇒ §7 第 1 条的加性原则成立。
+    sharpe: float | None = None
+    max_drawdown_pct: float | None = None
+    max_drawdown_peak_date: str | None = None
+    max_drawdown_trough_date: str | None = None
 
 
 class RunRequestBody(BaseModel):

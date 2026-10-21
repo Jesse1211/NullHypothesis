@@ -28,6 +28,17 @@ export function percentUnsigned(n: number | null): string {
   return `${n.toFixed(2)}%`
 }
 
+/** 裸比率(`contracts.yaml` 的 `formats.ratio`)—— 夏普用这个。
+ *
+ * **不追加 `%`、不强加 `+`**:夏普不是百分数,而 `percent` 两者都会做。
+ * `null` 表示该值在**数学上未定义**(策略不交易、或收益无波动、或样本不足
+ * 2 个收益),**不表示 0** —— 故显示空值标记而非 `0.00`(ADR-058/059)。
+ */
+export function ratio(n: number | null): string {
+  if (n === null || n === undefined) return NULL_DISPLAY
+  return n.toFixed(2)
+}
+
 export function integer(n: number): string {
   return n.toLocaleString('zh-CN')
 }
