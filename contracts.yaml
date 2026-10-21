@@ -110,6 +110,12 @@ thresholds:
   # ADR-054 门二:单笔现金分红 / close_before 超过此比值 → 响亮失败。
   # 抓 Yahoo / Sharadar 那类基准错导致的 5 倍膨胀(膨胀后股息率会荒谬)。
   dividend_yield_suspicion: 0.25
+  # ADR-054 门一(方向门)的容差。**不可按精确值断言** —— 厂商有浮点噪声
+  # (ADR-054 原话);该门抓的是**方向**写反(16 倍误差),不是精度。
+  # 与 fixtures.adr054_direction_gate.tol 是同一个量 ——
+  # tests/test_contracts.py 断言两处一致,tests/test_adjust.py 把
+  # data.py 的常量钉到这里(门 12「阈值不可写成裸字面量」)。
+  split_direction_tol: 0.05
 
 # ───────────────────────────── 正则 ─────────────────────────────
 patterns:
@@ -483,7 +489,12 @@ fixtures:
 
   # ───────────── T21 · 因子法复权(ADR-050 / 051 / 052 / 053 / 054)─────────────
   # 本块是 T21 全部门的期望值来源。测试只引用 key,不复述字面量。
-  # 每一项都由 tests/test_contracts.py 重新算出来(本文件开头的规则)。
+  # 每一项都由 tests/test_contracts.py 重新算出来(本文件开头的规则)——
+  # 具体是 test_adr053_close_before_basis_arithmetic 起的那一组;
+  # 而 test_every_t21_fixture_block_is_recomputed_here 是**元门**:
+  # 本块新增一个 key 却没有配套的重算断言时,它会红。
+  # (第 9 轮审查:本句原先是一句**空头承诺** —— 值都对,但没有任何断言
+  #  去重算它们。注释声称一个并不存在的机械保护,即 §7 规则 2 的违反。)
 
   # ADR-053 的**实测段**:分红在前、拆股在后(最常见的次序)。
   # 这是 T21 门 6 的全部三个子门共用的 fixture —— 缺第三个子门

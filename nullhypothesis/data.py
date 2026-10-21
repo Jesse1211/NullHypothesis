@@ -431,10 +431,22 @@ def load_csv(
     # `events` 是路径形态时在这里才解析 —— 此刻 `df["Date"]` 已校验、已排序,
     # 正是 `load_events` 的 `price_dates` 要的东西(T20 门 10 的区间过滤)。
     resolved = events
+    # ADR-040:`.file` 必须是**出问题的**那份 CSV。行为表的四条失败情形
+    # (方向门 / 量级门 / `amount >= close_before` / 首根 bar 除息日)的
+    # 过错都在**行为表**里 —— 它们的 `.column` 是 `ratio`/`amount`,而价格
+    # CSV 根本没有这两列,拿价格路径去报它等于把用户指向一份无辜的文件。
+    # 故行为表路径**单独**往下传(`load_events` 自己的失败早已这样报)。
+    events_file = str(events) if isinstance(events, (str, Path)) else None
     if isinstance(events, (str, Path)):
         resolved = load_events(events, price_dates=df["Date"])
 
-    return _adjust_prices(df, file_str, events=resolved, adj_close=adj_close_raw)
+    return _adjust_prices(
+        df,
+        file_str,
+        events=resolved,
+        adj_close=adj_close_raw,
+        events_file=events_file,
+    )
 
 
 # ═══════════ 因子法复权(T21 / ADR-050 · 051 · 052 · 054)═══════════
@@ -674,6 +686,7 @@ def _adjust_prices(
     *,
     events: "Sequence[CorporateEvent] | None",
     adj_close: "pd.Series | None",
+    events_file: str | None = None,
 ) -> "pd.DataFrame":
     """两路仲裁 + 全列同乘 + 跳空体检(ADR-050/051/052)。
 
@@ -686,12 +699,21 @@ def _adjust_prices(
     | 两路并存且一致 | **用行为表**(信息更多,可审计) |
     | 两路并存且不一致 | `DataValidationError`,指明哪一天、差多少 |
     | 两路缺席 | 不调价 + 跳空体检(ADR-051) |
+
+    `events_file`:行为表的路径(ADR-040 的 `.file` 归属)。行为表自身的
+    失败情形必须报**行为表**的路径,而不是价格 CSV 的 —— 见 `load_csv`
+    里那段注释。缺省 `None` 表示调用方直接传了已解析的事件序列(没有
+    文件可归属),此时沿用 `cumfactors_from_events` 的 `"<events>"` 占位。
     """
     # 空事件序列 ≡ 路径二缺席:`--events` 指向一份只有表头的合法行为表时
     # (T20 门 9),不该把它当成「有行为表」而跳过体检。
-    path_two = (
-        cumfactors_from_events(df, events, file_str) if events else None
-    )
+    path_two = None
+    if events:
+        path_two = (
+            cumfactors_from_events(df, events, events_file)
+            if events_file is not None
+            else cumfactors_from_events(df, events)
+        )
     path_one = (
         cumfactors_from_adj_close(df, adj_close) if adj_close is not None else None
     )
