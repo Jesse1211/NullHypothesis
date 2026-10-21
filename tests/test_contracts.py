@@ -153,6 +153,123 @@ def test_i7_four_prices_distinct(c):
     assert f["expect_fill_price"] not in f["reject_prices"]
 
 
+def test_adr056_slipped_prices_are_exactly_representable(c):
+    """ADR-056 要求 I7′ **仍是精确等式** —— 故期望价必须精确可表示。
+
+    这条门不是摆设:若 `s` 或 `Open` 换成一个让乘积落在浮点缝里的值,
+    `tests/test_slippage.py` 的 G1/G2 就不能再写 `==`,而 ADR-056 逐字说
+    「仍是精确等式,这是关键」。
+    """
+    f = c["fixtures"]["i7_four_distinct_prices"]
+    o, s = f["bar1"]["open"], f["slippage"]
+    assert o * (1.0 + s) == f["expect_fill_price_buy_slipped"]
+    assert o * (1.0 - s) == f["expect_fill_price_sell_slipped"]
+    # 四个候选价(含滑点后的正确值)仍全部互异 —— ADR-056 的鉴别力声明。
+    cands = [f["bar0"]["open"], f["bar0"]["close"], f["bar1"]["close"],
+             f["expect_fill_price_buy_slipped"]]
+    assert len(set(cands)) == 4
+    # 「用了对的 K 线但忘加滑点」是 ADR-056 新增的那条鉴别力。
+    assert f["reject_price_no_slippage"] == f["expect_fill_price"]
+    assert f["expect_fill_price_buy_slipped"] != f["reject_price_no_slippage"]
+
+
+def test_adr057_slippage_affordability_arithmetic(c):
+    """ADR-057:递减循环的单位成本必须含**全部**单位级成本(`s` 与 `rate`)。
+
+    本门**重算**三个可分辨值,且刻意同时实现**正确形式与被废弃形式**,
+    断言两者在 G14(b) 的那组参数上**给出不同的结果** —— 否则「拒绝 −1」
+    这条门是空的。
+    """
+    f = c["fixtures"]["adr057_slippage_affordability"]
+
+    def shares(open_price, rate, s, cash, held=0):
+        """ADR-014a/057 的**正确**形式:守卫 `> held`、对**差额**计费、与 `cash` 比。"""
+        investable = cash + held * open_price
+        t = math.floor(f["weight_full"] * investable / open_price)
+        unit = open_price * (1.0 + s) * (1.0 + rate)
+        while t > held and (t - held) * unit > cash:
+            t -= 1
+        return t
+
+    def shares_abandoned(open_price, rate, s, cash, held=0):
+        """ADR-014a 的**第一版** —— 它是个 bug(ADR-057 的警告框逐字)。"""
+        investable = cash + held * open_price
+        t = math.floor(f["weight_full"] * investable / open_price)
+        unit = open_price * (1.0 + s) * (1.0 + rate)
+        while t > 0 and t * unit > investable:
+            t -= 1
+        return t
+
+    # 未修正(裸 Open 作单位成本)确实超买并会破 I1。
+    unfixed = math.floor(f["weight_full"] * f["cash"] / f["open"])
+    assert unfixed == f["reject_shares_unfixed"]
+    cash_after_unfixed = f["cash"] - unfixed * f["open"] * (1.0 + f["slippage"])
+    assert round(cash_after_unfixed, 2) == f["reject_cash_after_unfixed"]
+    assert cash_after_unfixed < 0.0, "必须真的透支,否则这个 fixture 测不到东西"
+
+    # G6:只有滑点。
+    g6 = shares(f["open"], f["fee_rate_zero"], f["slippage"], f["cash"])
+    assert g6 == f["expect_shares_slippage_only"]
+    cash_after = f["cash"] - g6 * f["open"] * (1.0 + f["slippage"])
+    assert round(cash_after, 2) == f["expect_cash_after_slippage_only"]
+    assert cash_after >= 0.0
+
+    # G7:滑点 + 费率。三值互异。
+    g7 = shares(f["open"], f["fee_rate"], f["slippage"], f["cash"])
+    assert g7 == f["expect_shares_fee_and_slippage"]
+    assert len({g6, g7, f["reject_shares_unfixed"]}) == 3
+
+    # G9:往返总成本 == 名义额的 2s + 2·rate(精确)。
+    nominal = f["g9_shares"] * f["g9_open"]
+    buy = f["g9_open"] * (1.0 + f["slippage"])
+    sell = f["g9_open"] * (1.0 - f["slippage"])
+    net = (f["g9_shares"] * buy * (1.0 + f["g9_fee_rate"])
+           - f["g9_shares"] * sell * (1.0 - f["g9_fee_rate"]))
+    assert net == f["expect_roundtrip_net_loss"]
+    assert round(net / nominal, 10) == round(
+        2 * f["slippage"] + 2 * f["g9_fee_rate"], 10
+    )
+
+    # G3/G4:费与成交额都在滑点后价上。
+    price = f["i7_open"] * (1.0 + f["slippage"])
+    assert f["g3_shares"] * price == f["expect_amount_slipped"]
+    assert f["g3_shares"] * price * f["g3_fee_rate"] == f["expect_fee_on_slipped_price"]
+    assert f["g3_shares"] * f["i7_open"] * f["g3_fee_rate"] == f["reject_fee_on_raw_open"]
+
+    # G14(b):**两种形式在此给出不同结果** —— 这条门的鉴别力前提。
+    correct = shares(f["churn_open"], f["fee_rate_zero"], f["slippage"],
+                     f["churn_cash"], held=f["churn_shares_held"])
+    bad = shares_abandoned(f["churn_open"], f["fee_rate_zero"], f["slippage"],
+                           f["churn_cash"], held=f["churn_shares_held"])
+    assert correct - f["churn_shares_held"] == f["expect_churn_delta"]
+    assert bad - f["churn_shares_held"] == f["reject_churn_delta"]
+    assert f["expect_churn_delta"] != f["reject_churn_delta"]
+
+    # REAL_STACK:真实 CSV 第 2 根 K 线的首笔成交价,精确可表示。
+    assert f["real_stack_open"] * (1.0 + f["slippage"]) == (
+        f["expect_real_stack_fill_price"]
+    )
+    # 上界与 --fee 同一个值(ADR-039 的参数表,逐字对称)。
+    assert f["default_slippage"] == 0.0
+
+
+def test_adr056_rate_format_shows_five_bps_as_nonzero(c):
+    """`formats.rate` 必须有足够小数位 —— 两位会把 5bps 显示成「零成本」。
+
+    ADR-056 的诚实性挂在「报告里显示生效值」上;一个把 `0.0005` 显示成
+    `0.00` 的格式会把**非零**成本显示成零,那比不显示更坏。
+    """
+    f = c["fixtures"]["adr057_slippage_affordability"]
+    rendered = c["formats"]["rate"].format(f["slippage"])
+    assert float(rendered) == f["slippage"], "格式不得丢失滑点的有效数字"
+    assert c["formats"]["money"].format(f["slippage"]) == "0.00", (
+        "对照:money 格式确实会把它显示成零 —— 这就是不复用它的理由"
+    )
+    # `rate` 不是 Summary 字段的格式,故不得出现在 field_formats 里
+    # (那个键集合被 test_every_summary_field_has_exactly_one_format 钉死)。
+    assert "rate" not in set(c["field_formats"].values())
+
+
 def test_adr021_gap_arithmetic(c):
     f = c["fixtures"]["adr021_gaps"]
     closes, opens = f["closes"], f["opens"]

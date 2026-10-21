@@ -110,6 +110,8 @@ def write_run_json(report, png_paths: dict[str, str], out_dir: Path) -> None:
             "data_file": report.request.data_file,
             "cash": report.request.cash,
             "fee": report.request.fee,
+            # ADR-038/056:追加在既有键之后。既有键的**名称、类型、顺序逐字不变**。
+            "slippage": report.request.slippage,
         },
         "results": [
             {
@@ -140,6 +142,12 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     p.add_argument("--strategy", action="append", required=True)
     p.add_argument("--cash", type=float, default=100000.0)
     p.add_argument("--fee", type=float, default=0.0)
+    # ADR-056:与 `--fee` **同口径**(小数分数,0.0005 = 5bps)。
+    # `--help` 的量级提示是 ADR-056 的「参数存在即是声明」那一条的载体。
+    p.add_argument(
+        "--slippage", type=float, default=0.0,
+        help="滑点率 s,小数分数(0.0005 = 5bps),买入按 Open*(1+s)、卖出按 Open*(1-s) 成交",
+    )
     p.add_argument("--out", default="out")
     return p.parse_args(argv)
 
@@ -149,6 +157,10 @@ def _validate(ns: argparse.Namespace) -> None:
         raise _ArgError(f"--cash 必须 > 0,收到 {ns.cash}")
     if not (0.0 <= ns.fee < 0.1):
         raise _ArgError(f"--fee 必须在 [0, 0.1) 内,收到 {ns.fee}")
+    # ADR-056:校验与 `--fee` **逐字对称**(同一个区间写法,故 `nan` 同样被
+    # `not (0 <= x < 0.1)` 拒绝 —— 与 `--fee` 一字之差都没有)。
+    if not (0.0 <= ns.slippage < 0.1):
+        raise _ArgError(f"--slippage 必须在 [0, 0.1) 内,收到 {ns.slippage}")
     if not Path(ns.data).is_file():
         raise _ArgError(f"--data 文件不存在:{ns.data}")
 
@@ -187,7 +199,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _exit_code("data_validation")
 
     try:
-        results = run(ns.strategy, df, cash=ns.cash, fee=ns.fee)
+        results = run(
+            ns.strategy, df, cash=ns.cash, fee=ns.fee, slippage=ns.slippage
+        )
     except StrategyError as e:
         # ADR-022:立即终止,**不写任何输出文件**,错误含交易日序号+日期+traceback。
         print(f"❌ {e}", file=sys.stderr)
@@ -206,6 +220,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         data_file=Path(ns.data).name,
         cash=ns.cash,
         fee=ns.fee,
+        slippage=ns.slippage,          # ADR-056:生效值进报告头与 run.json
     )
     report = build_report(run_id, request, results)
 

@@ -26,6 +26,12 @@ formats:
   percent_unsigned: "{:.2f}%"      # 0.31%              绝对值量,加 + 号零信息
   date:             "%Y-%m-%d"     # 2020-03-16
   null_display:     "N/A"
+  # ADR-056:报告头里的【费率类】参数(fee / slippage)。四位小数 —— 5bps
+  # 即 0.0005,两位小数会把它显示成 0.00(把「有成本」显示成「零成本」)。
+  # 它【不是】 field_formats 的成员:fee / slippage 是 RunRequest 的字段,
+  # 不是 Summary 的字段,而 field_formats 的键集合被 test_contracts.py
+  # 钉死为 Summary 的字段集。
+  rate:             "{:.4f}"       # 0.0005 = 5bps
 
 # 每个 summary 字段用哪种格式 —— 这是 ADR-021 自相矛盾的根源,现在只有一处
 field_formats:
@@ -159,13 +165,24 @@ fixtures:
     expect_fills_added: 0
 
   # I7:四价互异,任一错位必然失败
+  #
+  # ADR-056 把 I7 重写为 I7′(成交价 == Open * (1 + dir * s))。期望值按
+  # 滑点更新后仍**精确可表示**,且四个候选值 50 / 100 / 400 / 200.1 **仍全部
+  # 互异** —— 鉴别力完整保留,**而且增强了**:现在还能抓「用了对的 K 线但
+  # 忘加滑点」这种新错误实现(忘加滑点 ⇒ 落在 reject_price_no_slippage 上)。
+  # s = 0 时期望值退化为 expect_fill_price,故原门的两行一字不改仍然成立。
   i7_four_distinct_prices:
     bar0: {open: 50.0, close: 100.0}
     bar1: {open: 200.0, close: 400.0}
     order_on_bar: 0
     shares: 1
-    expect_fill_price: 200.0   # bar1.Open
+    expect_fill_price: 200.0   # bar1.Open,s = 0(原 I7,向后兼容)
     reject_prices: [50.0, 100.0, 400.0]
+    # ── ADR-056(阶段三)追加:含滑点的期望值 ──
+    slippage: 0.0005
+    expect_fill_price_buy_slipped: 200.1    # bar1.Open * (1 + 0.0005)
+    expect_fill_price_sell_slipped: 199.9   # bar1.Open * (1 - 0.0005)
+    reject_price_no_slippage: 200.0         # 用了对的 K 线但忘加滑点
 
   # ADR-021:跳空三向可分
   adr021_gaps:
@@ -220,6 +237,58 @@ fixtures:
       final_equity: ["916,062.13"]
       trade_count: ["3"]
       max_gap_pct: ["8.42%", "-0.08%", "-842.00%"]
+
+  # ADR-057:可负担性递减循环的单位成本必须含【全部】单位级成本。
+  # 三值 998 / 999 / 1000 互异且可分辨:
+  #   1000 = 未修正(裸 Open 作单位成本)→ cash_after = -50.0 → 抛 I1
+  #    999 = 只含 s                      → cash_after = +50.05
+  #    998 = 同时含 s 与 rate(G7)
+  # 与 adr014a_affordability 当初钉 3689 vs 3694 的手法一致。
+  adr057_slippage_affordability:
+    cash: 100000.0
+    open: 100.0
+    weight_full: 1.0
+    slippage: 0.0005
+    # G6:满仓 + 只有滑点(rate = 0)
+    fee_rate_zero: 0.0
+    expect_shares_slippage_only: 999
+    expect_cash_after_slippage_only: 50.05
+    reject_shares_unfixed: 1000        # 裸 Open 作单位成本的错误实现
+    reject_cash_after_unfixed: -50.0   # 它会让 Account.apply 抛 I1
+    # G7:满仓 + 费率 + 滑点三者同时
+    fee_rate: 0.0013
+    expect_shares_fee_and_slippage: 998
+    # G8:ADR-014a 原夹具 + 滑点 —— 只断言 cash_after >= 0、不抛错
+    adr014a_open: 27.07
+    # G1/G2:I7' 的买卖成对,四价互异 fixture 的滑点后期望值
+    i7_open: 200.0
+    expect_buy_price: 200.1            # 200.0 * (1 + 0.0005)
+    expect_sell_price: 199.9           # 200.0 * (1 - 0.0005)
+    reject_price_no_slippage: 200.0    # 忘加滑点(s=0 时这才是正确值)
+    # G3/G4:手续费算在滑点后的价格上,Fill.amount 继承滑点后价
+    g3_shares: 10
+    g3_fee_rate: 0.001
+    expect_fee_on_slipped_price: 2.001
+    reject_fee_on_raw_open: 2.0        # 算在裸 Open 上
+    expect_amount_slipped: 2001.0
+    # G9:往返总成本 == 2s + 2*rate,精确相等
+    g9_shares: 100
+    g9_open: 100.0
+    g9_fee_rate: 0.001
+    expect_roundtrip_net_loss: 30.0    # 名义 10000 的 0.003
+    # G14(b):cash ≈ 0 的持仓情形 —— 唯一能区分两种循环形式的那组
+    churn_shares_held: 999
+    churn_cash: 0.0
+    churn_open: 27.07
+    expect_churn_delta: 0              # 正确形式
+    reject_churn_delta: -1             # 被废弃的 target*unit_cost>investable 形式
+    # REAL_STACK_GATE(G11):data/synthetic.csv 第 2 根 K 线,buy_and_hold 首笔成交
+    real_stack_open: 27.30
+    expect_real_stack_fill_price: 27.313650
+    reject_real_stack_shares_unfixed: 3663   # 未修正 → cash = -49.90 → 抛 I1
+    # 上界与校验口径,与 --fee 逐字对称(ADR-039 的参数表)
+    max_slippage_exclusive: 0.1
+    default_slippage: 0.0
 
   # OQ-08 的阈值,双向可证伪
   oq08_search_box_threshold:

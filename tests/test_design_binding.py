@@ -155,6 +155,27 @@ def test_numeric_fixtures_are_not_restated(c, design):
         ("t5_summary_values", ["expect_total_return_pct",
                                "reject_ratio_unscaled", "reject_wrong_quotient"]),
         ("t2_strategy_equity", ["expect_equity"]),
+        # T22 / ADR-056 + ADR-057(J2 裁决逐字:「落锁后须把本节门里的裸数值
+        # 改为 key 引用 —— 并把新 fixture 加入本门的覆盖清单,否则它们会成为
+        # 第六到第二十处复述点」)。
+        #
+        # **刻意不收进来的两个 key**:`expect_churn_delta`(值为 `0`)与
+        # `reject_fee_on_raw_open`(值为 `2.0`)。它们太泛 —— `== 0` 在
+        # DESIGN.md 里有九处**与本 fixture 无关**的合法出现(`shares == 0`、
+        # `mdd == 0.0` …),收进来只会产生误报,而误报会训练读者忽略这条门。
+        # 两者的鉴别力由 `tests/test_slippage.py` 的「期望值 != 拒绝值」断言
+        # 与 `tests/test_contracts.py` 的算术重算共同承担。
+        ("adr057_slippage_affordability", [
+            "expect_shares_slippage_only", "expect_shares_fee_and_slippage",
+            "reject_shares_unfixed", "expect_cash_after_slippage_only",
+            "expect_buy_price", "expect_sell_price",
+            "expect_fee_on_slipped_price", "expect_amount_slipped",
+            "expect_roundtrip_net_loss", "expect_real_stack_fill_price",
+            "reject_real_stack_shares_unfixed", "reject_churn_delta",
+        ]),
+        ("i7_four_distinct_prices", [
+            "expect_fill_price_buy_slipped", "expect_fill_price_sell_slipped",
+        ]),
     ]
     for fx, keys in checks:
         for k in keys:

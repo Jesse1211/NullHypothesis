@@ -114,7 +114,10 @@ def test_run_json_matches_the_pinned_schema(tmp_path):
 
     assert set(payload) == {"run_id", "request", "results", "assumptions",
                             "comparison_png_path"}
-    assert set(payload["request"]) == {"strategies", "data_file", "cash", "fee"}
+    # `slippage` 由 ADR-056 追加(阶段三的加性扩展,ADR-038 逐字授权)。
+    # 仍是集合相等 —— 这条门的作用是「字段名错会让阶段二读不到阶段一的产物」。
+    assert set(payload["request"]) == {"strategies", "data_file", "cash", "fee",
+                                       "slippage"}
     assert set(payload["results"][0]) == {"strategy", "summary", "png_path"}
     assert set(payload["results"][0]["summary"]) == set(C["field_formats"])
     import re

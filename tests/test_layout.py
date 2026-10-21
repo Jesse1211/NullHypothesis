@@ -63,7 +63,14 @@ VALUE_OBJECTS = [
     # `close` 由 ADR-049 补入(前端要在同一张图上画价格对照曲线)。
     ("nullhypothesis.run", "EquityPoint",
      {"date", "cash", "shares", "equity", "close"}),
-    ("nullhypothesis.run", "RunRequest", {"strategies", "data_file", "cash", "fee"}),
+    # `slippage` 由 ADR-056 **追加在末尾**(阶段三)。ADR-044 的字段表与
+    # ADR-038 的加性扩展条款逐字规定了这一条:既有四个字段的名称、类型、
+    # 顺序不变,新字段可空/有默认 ⇒ §7 第 1 条的加性原则成立。
+    # 门仍是**集合相等**(不是「包含」)—— 多一个字段同样要红,否则这条门
+    # 会放过任何未经 ADR 的字段。T20 的 `events` 落地时须在此并列追加,
+    # **不得**以单方版本整体覆盖(T22 门 17)。
+    ("nullhypothesis.run", "RunRequest",
+     {"strategies", "data_file", "cash", "fee", "slippage"}),
     ("nullhypothesis.run", "RunResult",
      {"strategy", "equity", "trades", "trades_ledger", "summary"}),
     ("nullhypothesis.run", "RunReport",

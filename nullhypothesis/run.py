@@ -102,12 +102,24 @@ class Summary:
 
 @dataclass(frozen=True)
 class RunRequest:
-    """一次运行的输入。ADR-044 钉死四个字段,与 ADR-038 的 `request` 同构。"""
+    """一次运行的输入。ADR-044 钉死四个字段,与 ADR-038 的 `request` 同构。
+
+    阶段三**追加在末尾**(ADR-044 的字段表逐字):`slippage`(ADR-056)。
+    追加而非插入的理由同 ADR-046 的 `Fill.amount` —— 既有门大量使用**位置
+    构造**,插在中间会让位置参数静默错位。新字段有默认值,故既有调用点
+    (`RunRequest(strategies, data_file, cash, fee)`)**一字不改**仍合法,
+    `§7` 第 1 条的加性原则成立。
+
+    *(ADR-053 的 `events` 由 T20 追加在 `slippage` 之后 —— 两任务共享本类,
+    合并时必须 rebase 并**保留双方字段**,见 T22 门 17 / T20 门。)*
+    """
 
     strategies: list[str]
     data_file: str
     cash: float
     fee: float
+    # ── 以下字段由 ADR-056(阶段三)追加在末尾 ──
+    slippage: float = 0.0                    # 滑点率,与 fee 同口径(0.0005 = 5bps)
 
 
 @dataclass(frozen=True)
@@ -190,8 +202,11 @@ def _run_one(
     df: "pd.DataFrame",
     cash: float,
     fee: float,
+    slippage: float = 0.0,
 ) -> RunResult:
-    bt = Backtest(cash=cash, fee=fee)
+    # ADR-056:滑点率一路透传到聚合根 —— 成交价的偏移只能发生在成交那一层
+    # (`resolve_queue`),本函数不碰价格。
+    bt = Backtest(cash=cash, fee=fee, slippage=slippage)
     strat = strategy_cls()
 
     # ADR-036:init() 在第 0 根之前恰调用一次,此时 data 零行、equity == cash。
@@ -298,8 +313,12 @@ def run(
     df: "pd.DataFrame",
     cash: float,
     fee: float = 0.0,
+    slippage: float = 0.0,
 ) -> list[RunResult]:
     """按 ADR-035 钉死的签名。每条策略独立跑一遍,互不影响。
+
+    `slippage`(ADR-056)**追加在末尾且有默认值** —— ADR-035 钉死的签名因此
+    向后兼容:不传它时行为与阶段二**逐点相同**(`s = 0` 使 `price == Open`)。
 
     **不校验 stem 唯一性** —— 那属 CLI 层(ADR-037/039)。故 `run()` 接受
     同一个策略文件两次,而 CLI 会拒绝。T5 的多策略隔离门正是靠这一点:
@@ -310,5 +329,5 @@ def run(
         path = Path(p)
         # 每条策略都重新 load —— 不复用类对象,避免模块级可变状态串味。
         cls = load_strategy(path)
-        results.append(_run_one(cls, path.stem, df, cash, fee))
+        results.append(_run_one(cls, path.stem, df, cash, fee, slippage))
     return results
