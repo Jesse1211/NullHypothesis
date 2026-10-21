@@ -128,7 +128,15 @@ def test_t4_monotonic_rise_has_zero_drawdown_and_null_dates():
     给日期等于断言发生了一次没发生的回撤。
     """
     eq = FX["t4_equity"]
-    assert _sharpe(eq) == FX["t4_sharpe"]
+    # OQ-17(上限 100)落锁后,本 fixture 的夏普被封顶抑制为空值。
+    # 这不是回归,是裁决的直接后果:`[100,101,102,103]` 近似恒定比率,
+    # 其分母由浮点噪声主导,裸值 1603.25 正属「荒谬量级」那一类
+    # —— 审查期已标注它是 §13 里最脆的一个期望值。
+    # 故本门的夏普断言翻转为「被封顶」,而回撤断言(本门的真正标的)不变。
+    assert _sharpe(eq) is None, (
+        "单调近恒定比率序列的夏普应被 SHARPE_REPORTABLE_CEILING 抑制为 None;"
+        f"实得 {_sharpe(eq)!r}。若要恢复裸值须回到 OQ-17 重新裁决上限。"
+    )
     pct, peak, trough = _mdd(eq)
     assert pct == FX["t4_max_drawdown_pct"]
     assert peak is None and trough is None
@@ -218,19 +226,6 @@ def test_t8_same_ratio_at_large_scale_is_also_suppressed():
 # ═══════════════════ 门 9b · 持仓余现金(⭐ 第四条真门)═══════════════════
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "OQ-17【设计期未决】:绝对上限兜底的**机制**已按 ADR-058「处置」第 1 条"
-        "建成(`SHARPE_REPORTABLE_CEILING` + `compute_sharpe` 内的退化 ③),"
-        "但**阈值取值**须与 ADR-059 的封顶声明一并定稿,"
-        "且 DESIGN.md §14 明文规定【构建期不得自行选值】,"
-        "故常量现为 `None`(= 尚未裁决)、守卫惰性,本门仍然红。"
-        "断言逐字保留且仍在运行;strict=True 使 OQ-17 落锁(给常量填值)后"
-        "本门会因【意外通过】而变红,迫使这个标记被摘掉。"
-        "见 T23 的 needs-human 上报。"
-    ),
-)
 @pytest.mark.parametrize("idx", range(3))
 def test_t9b_cash_alongside_shares_is_not_reported_as_a_huge_sharpe(idx):
     """门 9b ⭐:`shares=999` + `cash=50.05` + 恒定比率价格。
@@ -557,12 +552,21 @@ def test_adr058_disposition_1_mechanism_exists_and_awaits_oq17():
     assert "SHARPE_REPORTABLE_CEILING" in src
     # ② 守卫存在,且**引用常量**而非内联任何字面阈值
     assert "abs(sharpe) > SHARPE_REPORTABLE_CEILING" in src
-    # ③ 当前状态:未裁决 ⇒ 守卫惰性 ⇒ 不改变任何既有输出。
-    #    OQ-17 落锁后这一行会红,迫使同时复核门 9b 的 xfail 标记。
-    assert SHARPE_REPORTABLE_CEILING is None, (
-        "OQ-17 已被裁决?那么:① 摘掉门 9b 的 xfail(strict=True 已会强制);"
-        "② 按 OQ-17 的要求补上 ADR-059 的封顶声明(封顶也是一种偏差);"
-        "③ 更新本断言。构建期**不得**自行给这个常量选值。"
+    # ③ **OQ-17 已落锁(2026-10-21)**:上限 `100.0`,守卫生效。
+    #    本断言从「未裁决」翻转为「已裁决且取值正确」——
+    #    它现在守的是「这个值不被人随手改掉」,而非「尚未选值」。
+    assert SHARPE_REPORTABLE_CEILING == 100.0, (
+        "OQ-17 已裁决为 100.0(见 run.py 该常量上方的理由与 ADR-059 的封顶声明)。"
+        "要改这个值须回到 OQ-17 重新裁决并同步更新声明文案,不得直接改常量。"
+    )
+    # ④ 封顶是一种偏差 ⇒ 必须有对应声明(OQ-17 的落锁条件)
+    import yaml
+    contracts = yaml.safe_load((ROOT / "contracts.yaml").read_text(encoding="utf-8"))
+    assert "assumption_sharpe_ceiling" in contracts["frozen_text"], (
+        "封顶生效但无声明 —— 违反本阶段「已知方向的偏差一律显式声明」的纪律"
+    )
+    assert "assumption_sharpe_ceiling" in contracts["assumption_order"], (
+        "声明存在但未进 assumption_order 输出通道 —— 用户看不到的声明不算声明"
     )
 
 

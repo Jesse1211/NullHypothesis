@@ -181,7 +181,7 @@ def test_numeric_fixtures_are_not_restated(c, design):
         # 否则它们会成为第六到第二十处复述点(§7 的回归机制)。
         ("adr058_metrics", ["t1_sharpe", "t1_max_drawdown_pct",
                             "t2_sharpe", "t2_max_drawdown_pct",
-                            "t4_sharpe", "t6_sharpe", "t6_reject_sharpe_ddof0",
+                            "t6_sharpe", "t6_reject_sharpe_ddof0",
                             "t9_sharpe", "t9_max_drawdown_pct",
                             "t11_max_drawdown_pct", "t12_max_drawdown_pct"]),
     ]
