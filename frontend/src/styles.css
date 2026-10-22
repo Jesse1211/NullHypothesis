@@ -85,6 +85,9 @@
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
+/* 整页**不滚动** —— 滚动下沉到左右两个窗格各自(见 `.rail` / `.main`)。
+   没有这条时 `body` 会随内容变长,两栏一起滚:滚结果区会把表单也推走。 */
+body { overflow: hidden; }
 /* `#root` 是 React 的挂载点,**高度链必须经过它** —— 没有这条规则时
    `body { height:100% }` 到此为止,`.shell` 的 `min-height: 100%-46px`
    就是对一个 auto 高度的父级求百分比(无效),左栏于是塌成内容高度。
@@ -141,14 +144,21 @@ body {
   /* `--rail-pad` 由 `.nav-group` 的负 margin 引用 —— 两处必须同值,故设为 token */
   --rail-pad: 18px;
   padding: 18px var(--rail-pad) 40px;
-  /* 纵向占满整栏:栏本身由 `.shell` 的 stretch 拉满,这里让**内容**
-     也能利用那个高度 —— 策略列表之后的剩余空间由 `.rail-fill` 吸收,
-     使「跑」按钮与提示沉在底部,而不是全部挤在顶端。 */
+  /* 纵向占满整栏,并**独立滚动**:左右是两个窗格,各管自己的滚动条 ——
+     滚结果区不该把表单推走,反之亦然(ADR-048 把两者拆成 rail/main 两栏,
+     滚动分离是那个拆分在交互上的自然延续)。
+     `min-height: 0` 是 flex 子项能真正滚动的前提(否则它按内容撑开)。 */
   display: flex; flex-direction: column;
+  overflow-y: auto; min-height: 0;
 }
 /* 吸收剩余垂直空间的弹性间隔 —— 放在策略组之后 */
 .rail-fill { flex: 1 1 auto; min-height: 12px; }
-.main { padding: 18px 22px 48px; min-width: 0; }
+.main {
+  padding: 18px 22px 48px; min-width: 0;
+  /* 右侧窗格独立滚动(同上)。`min-width: 0` 防横向溢出,
+     `min-height: 0` 让纵向滚动生效。 */
+  overflow-y: auto; min-height: 0;
+}
 
 @media (max-width: 1080px) {
   .shell { grid-template-columns: 252px minmax(0, 1fr); }
@@ -241,6 +251,17 @@ body {
   .fgroup.nav-group,
   .fgroup.nav-group > fieldset { flex: 0 0 auto; }
   .fgroup.nav-group .picklist { flex: 0 0 auto; overflow-y: visible; }
+
+  /* **窄屏撤销「双窗格独立滚动」** —— 这里两栏是上下堆叠的,
+   * 各自滚动会变成两个互相争抢的小滚动区(左栏滚不到底就卡住,
+   * 右栏还得再找一次滚动条)。恢复整页单一滚动:
+   *   · `body` 放开 overflow —— 否则页面根本滚不动,下半部分永远看不到
+   *   · 两个窗格回到内容高度、不自带滚动条
+   * `#root` / `.shell` 的 `height:100%` 在此也须放开,否则内容被裁掉。 */
+  html, body { height: auto; overflow: visible; }
+  #root { height: auto; }
+  .shell { min-height: 0; }
+  .rail, .main { overflow-y: visible; min-height: 0; }
 }
 .fgroup.nav-group .lbl {
   /* 组标题:横贯左栏的区段头,下方一条实线把它与列表分开 */

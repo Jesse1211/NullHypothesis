@@ -583,3 +583,47 @@ describe('数字输入纵向排列', () => {
     expect(source('components/RunForm.tsx')!).not.toContain('fgroup three')
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 左右两窗格独立滚动(使用者:「历史/跑一次两页面是左右不同 window,
+// 所以 scroll 应该是分开的」)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('双窗格独立滚动', () => {
+  const css = cssSource
+
+  function decls(sel: string, from = 0): string {
+    const i = css.indexOf(sel + ' {', from)
+    expect(i, `styles.css 里找不到 ${sel}`).toBeGreaterThan(-1)
+    return css.slice(i, css.indexOf('}', i)).replace(/\/\*[\s\S]*?\*\//g, '')
+  }
+
+  it('⭐ .rail 与 .main 各自 overflow-y: auto', () => {
+    // 两者都没有时整个 document 作为单一窗格滚动:滚结果区会把左栏表单
+    // 一起推走 —— 那与 ADR-048 把界面拆成 rail/main 两栏的意图相反。
+    for (const sel of ['.rail', '.main']) {
+      const d = decls(sel)
+      expect(d, `${sel} 缺 overflow-y: auto —— 它就不是独立窗格`)
+        .toContain('overflow-y: auto')
+      expect(d, `${sel} 缺 min-height: 0 —— flex/grid 子项不加它不会真正滚动,`
+        + '而是按内容撑开').toContain('min-height: 0')
+    }
+  })
+
+  it('body 不整页滚动(否则两栏一起滚)', () => {
+    expect(css).toMatch(/body\s*\{[^}]*overflow:\s*hidden/s)
+  })
+
+  it('⭐ 窄屏(≤760px)必须恢复整页滚动', () => {
+    // 两栏在窄屏是上下堆叠的,各自滚动会变成两个互相争抢的小滚动区;
+    // 且若 body 仍 overflow:hidden,页面下半部分**永远看不到**。
+    const base = css.indexOf('.fgroup.nav-group {')
+    const mq = css.indexOf('@media (max-width: 760px)', base)
+    expect(mq).toBeGreaterThan(base)
+    const block = css.slice(mq, css.indexOf('\n}', css.indexOf('.rail, .main', mq)))
+    expect(block, '窄屏须放开 body 的 overflow,否则页面滚不动')
+      .toContain('overflow: visible')
+    expect(block, '窄屏两窗格须回到内容高度、不自带滚动条')
+      .toContain('.rail, .main')
+  })
+})
