@@ -42,6 +42,11 @@ function rule(text: string, cls = 'hr'): Line {
 export interface SummaryPanelProps {
   results: StrategyResult[]
   assumptions: string[]
+  /** ADR-056 机制 2「报告里显示生效值」—— 每张图、每个 JSON 都自带
+   *  「这条曲线假设了多少成本」。该机制是 ADR-056 用来**替代非零默认值**
+   *  的诚实性论证本身:后端有、界面无,等于这条论证在 Web 上断掉。
+   *  `undefined` = 本次没跑(空态),不渲染该行。 */
+  slippage?: number
   /** 本次运行的费率 —— 来自请求,后端原样回传。 */
   fee?: number
   /** 多策略时按策略的数字交给对比表,回执只留**整次运行**的属性
@@ -54,7 +59,7 @@ export interface SummaryPanelProps {
 }
 
 export default function SummaryPanel({
-  results, assumptions, fee, perStrategy = true,
+  results, assumptions, fee, slippage, perStrategy = true,
 }: SummaryPanelProps) {
   if (results.length === 0) return null
   // 区间/交易日数/初始资金对同一次运行的所有策略都相同,取第一条。
@@ -75,6 +80,16 @@ export default function SummaryPanel({
     // 零费率要标出来 —— 否则「赚了 8 倍」会被当成含成本的结果读。
     const note: Line = fee === 0 ? [{ cls: 'hr', text: '  (零成本基准)' }] : []
     lines.push(row(' 手续费率    ', fee.toFixed(4), 'n', ...note))
+  }
+  if (slippage !== undefined) {
+    // 与费率**并列且同口径**(4 位小数)。零滑点同样要标出来,
+    // 理由比零费率更强:零佣金在今天的美股零售是**现实的**,
+    // 零滑点**永远不现实**(ADR-059 的声明逐字这么写)。
+    // 故这里的注记不是「零成本基准」而是「不可实现」。
+    const note: Line = slippage === 0
+      ? [{ cls: 'hr', text: '  (零滑点 · 不可实现)' }]
+      : []
+    lines.push(row(' 滑点率      ', slippage.toFixed(4), 'n', ...note))
   }
   lines.push(rule(THIN))
 

@@ -51,9 +51,16 @@ export default function App() {
   const [dataFile, setDataFile] = useState<string | null>(null)
   const [cash, setCash] = useState('100000')
   const [fee, setFee] = useState('0')
+  /** ADR-056 的滑点率。默认 `'0'` —— 与 `--fee` 的默认值对称,
+   *  也与 ADR-007 的「零成本曲线作为基准,加费后看差异」一致。
+   *  **默认 0 不等于隐藏 0**:它出现在表单里(机制 1)且显示在回执里
+   *  (机制 2),故「滑点 = 0」是一个被显示的选择。 */
+  const [slippage, setSlippage] = useState('0')
   /** 本次结果对应的费率 —— 回执里显示的必须是**跑的时候**那个值,
    *  不是输入框的当前值(用户可能跑完又改了它)。 */
   const [ranFee, setRanFee] = useState<number | undefined>(undefined)
+  /** 同理:本次结果对应的滑点率(ADR-056 机制 2「报告里显示生效值」)。 */
+  const [ranSlippage, setRanSlippage] = useState<number | undefined>(undefined)
 
   async function refresh() {
     try {
@@ -95,9 +102,11 @@ export default function App() {
         data_file: dataFile,
         cash: Number(cash),
         fee: Number(fee),
+        slippage: Number(slippage),
       })
       setRunResult(res)
       setRanFee(Number(fee))
+      setRanSlippage(Number(slippage))
       // 历史列表随之更新(角标 +1)—— 但**不切 tab**:你点「跑」是想看
       // 结果,结果就在当前页;把人弹走是劫持。
       setRuns(await apiClient.listRuns())
@@ -171,11 +180,13 @@ export default function App() {
             dataFile={dataFile}
             cash={cash}
             fee={fee}
+            slippage={slippage}
             running={loading}
             onToggleStrategy={toggleStrategy}
             onDataFile={setDataFile}
             onCash={setCash}
             onFee={setFee}
+            onSlippage={setSlippage}
             onRun={() => void onRun()}
           />
         ) : (
@@ -219,6 +230,7 @@ export default function App() {
                       results={runResult.results}
                       assumptions={runResult.assumptions}
                       fee={ranFee}
+                      slippage={ranSlippage}
                       perStrategy={runResult.results.length === 1}
                     />
                   </section>

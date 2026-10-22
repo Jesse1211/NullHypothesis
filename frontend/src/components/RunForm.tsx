@@ -9,11 +9,16 @@ export interface RunFormProps {
   dataFile: string | null
   cash: string
   fee: string
+  /** ADR-056 的滑点率,与 `fee` **同口径**(小数,`0.0005` = 5bps)。
+   *  机制 1「参数存在即是声明」—— 它必须出现在表单里,
+   *  否则「滑点 = 0」是个无人提及的隐含假设而不是被显示的选择。 */
+  slippage: string
   running: boolean
   onToggleStrategy: (name: string) => void
   onDataFile: (name: string) => void
   onCash: (v: string) => void
   onFee: (v: string) => void
+  onSlippage: (v: string) => void
   onRun: () => void
 }
 
@@ -22,12 +27,14 @@ export interface RunFormProps {
  *  且 `dataFile != null`
  *  且 `cash` 为 `> 0` 的数字
  *  且 `fee` 在 `[0, 0.1)`
+ *  且 `slippage` 在 `[0, 0.1)`(与 `fee` **逐字对称** —— ADR-056/ADR-039)
  */
 export function canRun(p: {
   selectedStrategies: string[]
   dataFile: string | null
   cash: string
   fee: string
+  slippage: string
 }): boolean {
   if (p.selectedStrategies.length < 1) return false
   if (p.dataFile === null) return false
@@ -37,6 +44,10 @@ export function canRun(p: {
   if (p.fee.trim() === '') return false
   const fee = Number(p.fee)
   if (!Number.isFinite(fee) || fee < 0 || fee >= 0.1) return false
+  // 滑点的校验与费率**逐字对称**(ADR-056:「与 --fee 的校验式逐字对称」)
+  if (p.slippage.trim() === '') return false
+  const slippage = Number(p.slippage)
+  if (!Number.isFinite(slippage) || slippage < 0 || slippage >= 0.1) return false
   return true
 }
 
@@ -46,8 +57,8 @@ export const FILTER_THRESHOLD = 20
 
 export default function RunForm(props: RunFormProps) {
   const {
-    strategies, dataFiles, selectedStrategies, dataFile, cash, fee,
-    running, onToggleStrategy, onDataFile, onCash, onFee, onRun,
+    strategies, dataFiles, selectedStrategies, dataFile, cash, fee, slippage,
+    running, onToggleStrategy, onDataFile, onCash, onFee, onSlippage, onRun,
   } = props
 
   const ok = canRun(props)
@@ -117,7 +128,7 @@ export default function RunForm(props: RunFormProps) {
         )}
       </div>
 
-      <div className="fgroup two">
+      <div className="fgroup three">
         <div>
           <label className="lbl" htmlFor="cash">初始资金</label>
           <div className="field">
@@ -138,6 +149,20 @@ export default function RunForm(props: RunFormProps) {
             <span className="unit">×额</span>
           </div>
         </div>
+        {/* ADR-056 机制 1:参数存在即是声明。与 `手续费率` 并列、同口径
+            (小数而非 bps —— 同一张表里两种单位正是本阶段开篇指出的
+            那类单位不一致隐患)。缺了它,界面只能跑后端默认的 0
+            且不告知,而同屏声明却写着「零滑点永远不现实」。 */}
+        <div>
+          <label className="lbl" htmlFor="slippage">滑点率</label>
+          <div className="field">
+            <input
+              id="slippage" value={slippage} inputMode="decimal"
+              onChange={(e) => onSlippage(e.target.value)}
+            />
+            <span className="unit">×价</span>
+          </div>
+        </div>
       </div>
 
       <button
@@ -150,7 +175,7 @@ export default function RunForm(props: RunFormProps) {
         {selectedStrategies.length === 0
           ? '至少选一条策略才能跑。'
           : !ok
-            ? '资金须 > 0,费率须在 [0, 0.1) 内。'
+            ? '资金须 > 0,费率与滑点率须在 [0, 0.1) 内。'
             : '同步请求,运行期间按钮禁用(ADR-028)。'}
       </p>
     </aside>
