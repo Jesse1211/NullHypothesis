@@ -453,3 +453,46 @@ describe('暗主题文字对比度', () => {
     expect(r('--ink-2')).toBeGreaterThan(r('--ink-3'))
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 左栏策略选择器:整组满铺(使用者要求「像左侧 nav bar 一样,左侧铺满」)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('策略选择器满铺左栏', () => {
+  const css = cssSource
+
+  it('--rail-pad 是 token —— 满铺靠它与 .rail 的 padding 同值', () => {
+    expect(css).toContain('--rail-pad:')
+    expect(css).toMatch(/\.rail\s*\{[^}]*padding:[^;]*var\(--rail-pad\)/s)
+  })
+
+  it('⭐ 负 margin 只有【一处】—— 两处会双重偏移,行越出左栏', () => {
+    // 这是本轮真实踩到的坑:`.pick` 原本自带负 margin 实现满铺,
+    // 加上父级 `.nav-group` 的负 margin 后,行会向左越界 18px。
+    const n = (css.match(/calc\(-1 \* var\(--rail-pad\)\)/g) ?? []).length
+    expect(n, `负 margin 出现 ${n} 次 —— 满铺只能由一层承担(.nav-group)`).toBe(1)
+  })
+
+  it('组标题横贯左栏(有自己的上下分隔线),不是内缩小标题', () => {
+    const i = css.indexOf('.fgroup.nav-group .lbl {')
+    expect(i).toBeGreaterThan(-1)
+    const block = css.slice(i, css.indexOf('}', i))
+    expect(block).toContain('border-top')
+    expect(block).toContain('border-bottom')
+    expect(block, '标题的左右内边距须用 --rail-pad,与行对齐')
+      .toContain('var(--rail-pad)')
+  })
+
+  it('策略组用了 nav-group(否则只有行满铺、标题仍内缩)', () => {
+    expect(source('components/RunForm.tsx')!).toContain('fgroup nav-group')
+  })
+
+  it('.pick 不再是卡片 —— 无圆角、无四边框,选中靠左侧条', () => {
+    const i = css.indexOf('.pick {')
+    const block = css.slice(i, css.indexOf('}', i))
+    expect(block).not.toContain('border-radius')
+    expect(block).toContain('border-left')
+    const on = css.slice(css.indexOf('.pick.on {'), css.indexOf('}', css.indexOf('.pick.on {')))
+    expect(on, '选中态须用 border-left-color 标识').toContain('border-left-color')
+  })
+})

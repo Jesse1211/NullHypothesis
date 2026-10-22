@@ -189,13 +189,33 @@ body {
   display: flex; align-items: center; gap: 9px;
   /* 左侧留出 3px 给强调条,故 padding-left 比 `--rail-pad` 少 3px */
   padding: 9px var(--rail-pad) 9px calc(var(--rail-pad) - 3px);
-  margin: 0 calc(-1 * var(--rail-pad));
+  /* **不再自带负 margin** —— 满铺现在由父级 `.nav-group` 承担。
+     两处都加负 margin 会【双重偏移】,行会越出左栏边界 18px。
+     `.pick` 因此在任何容器里都只负责自己的内边距。 */
   cursor: pointer;
   border: 0; border-left: 3px solid transparent;
   border-bottom: 1px solid var(--line-soft);
   font-family: var(--mono); font-size: 12.5px; color: var(--ink-2);
 }
-.picklist .pick:first-child { border-top: 1px solid var(--line-soft); }
+.picklist .pick:first-child { border-top: 0; }
+
+/* 整组满铺 —— 上一轮只让 `.pick` 满铺,但组标题与下方提示仍内缩在
+ * `--rail-pad` 里,于是列表夹在两段缩进文字之间,**整体仍读作一个 box**。
+ * 真正像 nav bar 需要整组都铺满:标题自带分隔线横贯左栏,行紧随其后。 */
+.fgroup.nav-group { margin: 0 calc(-1 * var(--rail-pad)) 20px; }
+.fgroup.nav-group > fieldset { display: block; }
+.fgroup.nav-group .lbl {
+  /* 组标题:横贯左栏的区段头,下方一条实线把它与列表分开 */
+  margin: 0; padding: 7px var(--rail-pad) 7px var(--rail-pad);
+  background: var(--surface-2); color: var(--ink-2);
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  width: 100%;
+}
+.fgroup.nav-group .hint,
+.fgroup.nav-group > fieldset > .hint {
+  /* 提示文字回到左栏的正常内缩 —— 它是说明,不是导航项 */
+  margin: 9px var(--rail-pad) 0;
+}
 .pick:hover { background: var(--surface-2); color: var(--ink); }
 .pick input { accent-color: var(--accent); margin: 0; width: 13px; height: 13px; }
 .pick.on {

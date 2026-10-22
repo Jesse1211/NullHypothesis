@@ -66,7 +66,10 @@ export default function RunForm(props: RunFormProps) {
 
   return (
     <aside className="rail">
-      <div className="fgroup">
+      {/* `nav-group`:整组**满铺**左栏(标题 + 列表),读起来是侧边导航而非
+          表单里的一个小 box。只让 `.pick` 满铺不够 —— 标题与提示若仍内缩,
+          列表会夹在两段缩进文字之间,整体依旧是个盒子。 */}
+      <div className="fgroup nav-group">
         <fieldset>
           <legend className="lbl">策略 · strategies/</legend>
           {strategies.length === 0 ? (
