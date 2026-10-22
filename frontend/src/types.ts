@@ -114,9 +114,35 @@ export interface ArchivedRun {
   }
   results: Array<{
     strategy: string
-    summary: Summary
+    /** **`ArchivedSummary`,不是 `Summary`** —— 归档是**历史记录**,
+     *  阶段二写下的那些**根本没有** ADR-058 的四个键。用 `Summary`
+     *  会让类型系统断言它们必定存在,于是 `undefined` 检查被判为
+     *  不可达分支,而运行时它们确实是 `undefined`(实测 95 条归档里
+     *  68 条如此)—— 那是类型在替历史编数据。 */
+    summary: ArchivedSummary
     png_path: string
   }>
   assumptions: string[]
   comparison_png_path: string | null
+}
+
+/** 归档里的汇总 —— ADR-058 的四个字段**可能整个键都不存在**。
+ *
+ * 与 `Summary` 的区别是**本质的**,不是方便:
+ *   * `number | null` —— 键存在,值为「数学上未定义」(策略不交易、无波动、样本不足)
+ *   * `undefined`     —— 键不存在,即「阶段二没算过这个指标」
+ *
+ * 二者在屏幕上**必须长得不一样**:前者显示空值标记(ADR-059 的声明逐字
+ * 解释那个标记意为「未定义」),后者**整段不渲染**。把后者显示成空值标记
+ * 等于断言一条 `+145%` 的买入持有「夏普在数学上未定义」—— 那是假话。
+ * 渲染侧的实现见 `ArchiveDetail.tsx` 的 figcaption。
+ */
+export interface ArchivedSummary extends Omit<
+  Summary,
+  'sharpe' | 'max_drawdown_pct' | 'max_drawdown_peak_date' | 'max_drawdown_trough_date'
+> {
+  sharpe?: number | null
+  max_drawdown_pct?: number | null
+  max_drawdown_peak_date?: string | null
+  max_drawdown_trough_date?: string | null
 }

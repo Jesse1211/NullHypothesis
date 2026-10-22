@@ -97,8 +97,15 @@ describe('I8 读模型一致性(前端零算术)', () => {
     r.summary.mean_abs_gap_pct = null
     render(<SummaryPanel results={[r]} assumptions={[]} />)
     // 最大跳空那一行同时含值与日期,两者都应是 null_display。
-    expect(field('最大跳空').split(/\s+/).filter(Boolean)).toEqual(['—', '—'])
-    expect(field('均值跳空')).toBe('—')
+    //
+    // **断言 `NULL_DISPLAY` 而不是字面量 `'—'`。** 手动 QA 发现:原门写死
+    // `'—'`,而 `contracts.yaml` 的 `formats.null_display` 是 `N/A` ——
+    // 于是这条门把那个漂移**编码**进了测试,CLI 与界面显示两个不同符号而
+    // 全绿。字面量化的期望值在这里是反作用的:它锁住的是实现现状,不是契约。
+    // 契约与常量之间的绑定由 `layout.test.ts` 的专门一条门守护。
+    expect(field('最大跳空').split(/\s+/).filter(Boolean))
+      .toEqual([NULL_DISPLAY, NULL_DISPLAY])
+    expect(field('均值跳空')).toBe(NULL_DISPLAY)
     const all = receiptText()
     expect(all).not.toMatch(/null|NaN|undefined/)
   })
@@ -468,6 +475,65 @@ describe('ADR-032 历史', () => {
       .map((i) => i.getAttribute('src')!)
     expect(srcs).toContain(`/api/runs/${archived.run_id}/png/comparison.png`)
     for (const s of srcs) expect(s.startsWith('/out/')).toBe(false)
+  })
+
+  // ───────── ADR-058 的两个指标必须在归档视图里可见 ─────────
+  //
+  // 手动 QA 发现:它们在 `ArchiveDetail` 里**完全缺失** —— 26 条已含这两个
+  // 字段的归档,用户在界面上看不到,得去调 API。ADR-032 把本端点定义为
+  // 「该次的**汇总** + 归档 PNG」,受限的只是「不重建 Recharts」,汇总在范围内。
+
+  it('ADR-058:归档视图显示夏普与最大回撤(含峰谷日期)', () => {
+    const { container } = render(<ArchiveDetail run={archived} />)
+    const cap = container.querySelector('.archive-detail figcaption')!.textContent!
+    const s = archived.results[0].summary
+    // I8:屏幕上的数字逐字来自 JSON,前端零算术
+    expect(cap).toContain(`夏普 ${s.sharpe!.toFixed(2)}`)
+    expect(cap).toContain(`回撤 ${s.max_drawdown_pct!.toFixed(2)}%`)
+    expect(cap).toContain(s.max_drawdown_peak_date!)
+    expect(cap).toContain(s.max_drawdown_trough_date!)
+    // 回撤是**正数幅度** —— 绝不带负号(ADR-058),也不得是 `-0.00%`
+    expect(cap).not.toContain(`回撤 -`)
+    expect(cap).not.toContain('-0.00%')
+  })
+
+  it('⭐ 键【缺失】(阶段二的归档)→ 整段不渲染,而不是显示空值标记', () => {
+    // 这是本组门里最重要的一条。实测 95 条归档里 **68 条**没有这两个键。
+    // 若渲染成空值标记,屏幕就等于断言「该值在数学上未定义」—— 而同屏的
+    // ADR-059 声明逐字这么解释那个标记。但一条 +145% 的买入持有,它的夏普
+    // **完全有定义**,只是阶段二没算。那是在替历史编数据。
+    const legacy = clone(archived) as Record<string, any>
+    for (const k of ['sharpe', 'max_drawdown_pct',
+                     'max_drawdown_peak_date', 'max_drawdown_trough_date']) {
+      delete legacy.results[0].summary[k]
+    }
+    const { container } = render(<ArchiveDetail run={legacy as never} />)
+    const cap = container.querySelector('.archive-detail figcaption')!.textContent!
+    expect(cap).not.toContain('夏普')
+    expect(cap).not.toContain('回撤')
+    // 且**不崩、不出现 undefined / NaN**(向后兼容)
+    expect(cap).not.toContain('undefined')
+    expect(cap).not.toContain('NaN')
+    // 既有字段照常显示 —— 整条 figcaption 不是被整段吞掉
+    expect(cap).toContain('期末')
+  })
+
+  it('⭐ 键存在但为 null(数学上未定义)→ 显示空值标记,不是 0', () => {
+    // 与上一条成对:两者**必须长得不一样**。少了任何一条,
+    // 「未记录」与「未定义」就会被混为一谈。
+    const idle = clone(archived)
+    const s = idle.results[0].summary as unknown as Record<string, unknown>
+    s.sharpe = null
+    s.max_drawdown_pct = 0.0          // 未发生下跌是**确定事实**,故 0 而非 null
+    s.max_drawdown_peak_date = null
+    s.max_drawdown_trough_date = null
+    const { container } = render(<ArchiveDetail run={idle} />)
+    const cap = container.querySelector('.archive-detail figcaption')!.textContent!
+    expect(cap).toContain(`夏普 ${NULL_DISPLAY}`)
+    expect(cap).not.toContain('夏普 0')          // 0 是一种特定的谎言
+    // 回撤 0.00% 带两个空值日期 —— 给日期等于断言发生过一次没发生的回撤
+    expect(cap).toContain('回撤 0.00%')
+    expect(cap).toContain(`(${NULL_DISPLAY} ~ ${NULL_DISPLAY})`)
   })
 
   it('归档详情中【不存在】Recharts 容器 —— 只显示 PNG 快照', () => {

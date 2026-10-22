@@ -13,6 +13,8 @@
 import { describe, expect, it } from 'vitest'
 import pkg from '../../package.json'
 import viteConfig from '../../vite.config.ts?raw'
+import contractsYaml from '../../../contracts.yaml?raw'
+import { NULL_DISPLAY } from '../format'
 
 
 // eager + query:'?raw' → { '/src/App.tsx': '<源码字符串>', ... }
@@ -315,5 +317,53 @@ describe('ADR-048 nav bar:跑一次 / 历史', () => {
     for (const l of setTabCalls) {
       expect(l, `切 tab 时清了状态:${l.trim()}`).not.toMatch(/set\w+\(null\)/)
     }
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `contracts.yaml` ↔ 前端常量的逐字绑定
+//
+// 手动 QA 发现的缺陷:`format.ts` 把 `NULL_DISPLAY` 硬编码成 `'—'`,而契约写
+// 的是 `N/A`。后端**运行时读契约**,前端硬编码 —— 同一次运行在 CLI 与 Web 上
+// 显示两个不同的空值符号,而 115 条门全绿(`render.test.tsx` 断言的是字面量
+// `'—'`,把漂移编码进去了)。
+//
+// 前端无法在运行时读 YAML(无该依赖,且 I8 不允许前端解析契约),故那个常量是
+// 一处**不可避免的镜像**。不可避免的镜像必须有门 —— 否则它就是一个静默漂移点。
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('contracts.yaml ↔ 前端常量', () => {
+  /** 从 YAML 文本里取一个标量 key 的值(不引入 YAML 解析依赖 ——
+   *  那会违反 ADR-037b 的依赖集合,而本文件自己在断言那个集合)。 */
+  function yamlScalar(key: string): string {
+    const m = contractsYaml.match(
+      new RegExp(`^\\s*${key}:\\s*"([^"]*)"`, 'm'),
+    )
+    expect(m, `contracts.yaml 里找不到 ${key}`).toBeTruthy()
+    return m![1]
+  }
+
+  it('NULL_DISPLAY 与 formats.null_display 逐字相等', () => {
+    expect(NULL_DISPLAY).toBe(yamlScalar('null_display'))
+  })
+
+  it('没有任何源文件把空值标记写成字面量', () => {
+    // 查的是**代码里**的 `'—'` / `'N/A'` 字面量,不是注释里的字符。
+    // 先剥掉注释 —— 否则这条门会把「解释这个 bug 的注释」本身判为违规
+    // (实测:我写的那两段说明文字就命中了,那是假阳性)。
+    const stripComments = (src: string) =>
+      src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+
+    const offenders = Object.entries(SOURCES)
+      // `format.ts` 是 NULL_DISPLAY 的**定义处**,它必须含那个字面量
+      .filter(([f]) => !f.includes('format.ts'))
+      .filter(([, src]) => /(['"`])(?:—|N\/A)\1/.test(stripComments(src)))
+      .map(([f]) => f)
+
+    expect(
+      offenders,
+      '空值标记必须引用 NULL_DISPLAY(它绑定 contracts.yaml),不得写死符号 ——'
+      + '写死会让「契约改了而界面没改」静默通过,正是本组门要防的漂移',
+    ).toEqual([])
   })
 })
