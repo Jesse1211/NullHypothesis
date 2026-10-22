@@ -131,7 +131,7 @@ export default function RunForm(props: RunFormProps) {
         )}
       </div>
 
-      <div className="fgroup three">
+      <div className="fgroup vstack">
         <div>
           <label className="lbl" htmlFor="cash">初始资金</label>
           <div className="field">

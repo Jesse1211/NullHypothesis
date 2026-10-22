@@ -283,11 +283,16 @@ body {
 .field input:focus { outline: none; }
 .field:focus-within { border-color: var(--accent); }
 .field .unit { font-family: var(--mono); font-size: 11px; color: var(--ink-3); white-space: nowrap; }
-.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-/* 三个并排的数字输入(初始资金 / 手续费率 / 滑点率)——
-   ADR-056 机制 1「参数存在即是声明」要求滑点与费率**并列可见**。
-   加性:`.two` 逐字不变,既有用法不受影响。 */
-.three { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+/* 数字输入(初始资金 / 手续费率 / 滑点率)**纵向堆叠**。
+ *
+ * 原先是横向网格(`.two` 两栏 → 加滑点后 `.three` 三栏)。三栏挤在 268px 的
+ * 左栏里,每个输入框只剩约 70px —— `100000.00` 这种值会被截断,而
+ * ADR-056 机制 2 要求生效值**可见**,看不全就谈不上可见。
+ * 纵向后每个框占满栏宽,标签与值一一对应,扫读也更快(左栏是单列布局,
+ * 横向网格在这里是跟布局方向对抗)。
+ *
+ * `.two` 已随之删除 —— 改为纵向后不再有调用方,留着就是死代码。 */
+.vstack { display: flex; flex-direction: column; gap: 12px; }
 
 select.sel {
   font-family: var(--mono); font-size: 12.5px; color: var(--ink);

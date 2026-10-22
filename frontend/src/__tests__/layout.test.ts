@@ -549,3 +549,37 @@ describe('左栏占满屏高', () => {
     expect(block).toContain('overflow-y: visible')
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 数字输入纵向堆叠(使用者:「初始资金/手续费率/滑点率 都纵向展示,不需要横着」)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('数字输入纵向排列', () => {
+  const css = cssSource
+
+  it('三个输入用 .vstack(纵向),不是横向网格', () => {
+    const src = source('components/RunForm.tsx')!
+    expect(src).toContain('fgroup vstack')
+    // 三个标签都在同一组里
+    for (const id of ['cash', 'fee', 'slippage']) {
+      expect(src, `缺少 ${id} 输入`).toContain(`htmlFor="${id}"`)
+    }
+  })
+
+  it('⭐ .vstack 是 column 方向 —— 不得退回多栏网格', () => {
+    const i = css.indexOf('.vstack {')
+    expect(i, 'styles.css 缺 .vstack').toBeGreaterThan(-1)
+    const block = css.slice(i, css.indexOf('}', i))
+    expect(block).toContain('flex-direction: column')
+    expect(block, '横向网格会把 268px 的左栏切成约 70px 一格,'
+      + '`100000.00` 会被截断 —— 而 ADR-056 机制 2 要求生效值可见')
+      .not.toContain('grid-template-columns')
+  })
+
+  it('已删除的 .two / .three 不得复活(死代码 + 横向回退)', () => {
+    expect(css).not.toMatch(/^\.two\s*\{/m)
+    expect(css).not.toMatch(/^\.three\s*\{/m)
+    expect(source('components/RunForm.tsx')!).not.toContain('fgroup two')
+    expect(source('components/RunForm.tsx')!).not.toContain('fgroup three')
+  })
+})
