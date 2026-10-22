@@ -141,6 +141,24 @@ def write_run_json(report, png_paths: dict[str, str], out_dir: Path) -> None:
                 "strategy": r.strategy,
                 "summary": _summary_json(r.summary),
                 "png_path": png_paths.get(r.strategy),
+                # ADR-032 修订(T26):逐日 equity 序列进归档,让历史页能用
+                # **与「跑一次」同一个** Recharts 组件重画交互图(双轴 / hover /
+                # 图例切换),而不是只显示一张静态 PNG。
+                #
+                # **投影与 ADR-038 的 API 响应逐字段相同**(`date`/`equity`/
+                # `close` 三键)—— 这是刻意的:两侧喂的是同一个 `EquityChart`,
+                # 投影不同会让历史页悄悄需要一个变体组件,而那正是 ADR-049
+                # 的双轴逻辑出现第二份实现的入口。`cash`/`shares` 仍不出档:
+                # 它们是 I3 内部对账量(ADR-038 同款理由)。
+                #
+                # **追加在 `png_path` 之后**:既有键的名称、类型、顺序逐字不变
+                # (与 `events`/`slippage` 的加性先例同构)。PNG 仍然写、仍然
+                # 归档 —— 它是 CLI 用户的产物,也是旧 checkout 写的归档里唯一
+                # 存在的图,故 `ArchiveDetail` 的回退分支不能删。
+                "equity": [
+                    {"date": p.date, "equity": p.equity, "close": p.close}
+                    for p in r.equity
+                ],
             }
             for r in report.results
         ],

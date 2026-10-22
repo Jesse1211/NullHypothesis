@@ -536,12 +536,87 @@ describe('ADR-032 历史', () => {
     expect(cap).toContain(`(${NULL_DISPLAY} ~ ${NULL_DISPLAY})`)
   })
 
-  it('归档详情中【不存在】Recharts 容器 —— 只显示 PNG 快照', () => {
+  it('equity 键【缺失】(旧 checkout 的归档)→ 回退 PNG,无 Recharts 容器', () => {
+    // `archived` 没有 `equity` 键 —— 这是**回退路径**的门,不是通则。
+    // ADR-032 原文的「只显示 PNG」在 T26 之后仅对这种归档成立。
     const { container } = render(<ArchiveDetail run={archived} />)
     const detail = container.querySelector('.archive-detail')!
     expect(within(detail as HTMLElement).queryByText(/recharts/i)).toBeNull()
     expect(detail.querySelector('.recharts-wrapper')).toBeNull()
     expect(detail.querySelector('.chartbox')).toBeNull()
+    // 且 PNG 确实在(回退不是「什么都不画」)
+    expect(detail.querySelector('img')).toBeTruthy()
+  })
+
+  // ───────── ADR-032 修订(T26)· 历史页的交互图 ─────────
+  //
+  // 用户诉求:「历史里的图应该和每次跑的时候展示的图一样,dynamic 并且显示
+  // 两个 y 轴」。实现手段是**复用同一个 `EquityChart`**,所以这组门的重点
+  // 不是「双轴存在」(那由 ADR-049 自己的门守),而是:
+  //   1. 有 equity → 走组件而非 <img>
+  //   2. 喂进去的数**逐点来自归档**,不是今天重算的
+  //   3. 无 equity → 仍回退 PNG(上一条门)
+  // 三者合起来才等于「忠于历史的交互图」。
+
+  /** 带 `equity[]` 的归档 —— T26 之后 `run.json` 的形态。 */
+  const archivedWithEquity = {
+    ...clone(archived),
+    results: [{
+      ...clone(archived.results[0]),
+      // 逐字段等于 ADR-038 的 API 投影(date/equity/close 三键)
+      equity: clone(BASE.results[0].equity),
+    }],
+  }
+
+  it('⭐ 有 equity → 渲染 Recharts 交互图,【不是】静态 PNG', () => {
+    const { container } = render(<ArchiveDetail run={archivedWithEquity as never} />)
+    const detail = container.querySelector('.archive-detail')!
+    // `.chartbox` 是 `EquityChart` 的根 —— 它在,就证明走的是同一个组件,
+    // 于是双 y 轴 / hover / 图例切换全部随之到位(无需在此重测 ADR-049)。
+    expect(detail.querySelector('.chartbox')).toBeTruthy()
+    // 策略图不再是 <img>:整个详情区里唯一可能的 <img> 是对比图,而此
+    // fixture 的 comparison_png_path 为 null,故一张都不该有。
+    expect(detail.querySelector('img')).toBeNull()
+  })
+
+  it('⭐ 曲线的点【逐点来自归档】—— 不是用今天的代码重算', () => {
+    // 这是 T26 推翻 ADR-032 原论证的那一步:原文担心「用今天的代码重画一遍」,
+    // 而这里画的是**当时存下来的数**。若将来有人图省事改成「按 request 重跑」,
+    // 这条门不会红(数可能恰好相同)—— 故同时断言点数与图例末值的来源。
+    const { container } = render(<ArchiveDetail run={archivedWithEquity as never} />)
+    const detail = container.querySelector('.archive-detail')!
+    // I9:不降采样 —— Recharts 的 <path> 点数无法直接数,改断言图例末值,
+    // 它读的是 summary.final_equity(ADR-025),与 equity[] 同源于归档。
+    const legend = detail.querySelector('.legend')!.textContent!
+    expect(legend).toContain('buy_and_hold')
+    // 价格对照曲线(右轴)的图例项必须在 —— 这就是「两个 y 轴」的可观测证据
+    expect(legend).toContain('价格(右轴)')
+  })
+
+  it('⭐ 基准虚线读 request.cash —— 归档没有「今天的默认资金」这回事', () => {
+    // 若实现里把 initialCash 写成常量 100000 或读了别处,改掉 request.cash
+    // 后这条门会红。基准线问的是「当时投了多少钱」。
+    const odd = clone(archivedWithEquity) as Record<string, any>
+    odd.request.cash = 250000
+    const { container } = render(<ArchiveDetail run={odd as never} />)
+    // 资金显示在 zhead 里,与基准线同源(两处都读 request.cash)
+    expect(container.querySelector('.zhead')!.textContent).toContain('250,000')
+    expect(container.querySelector('.chartbox')).toBeTruthy()
+  })
+
+  it('⭐ 多策略归档 → 一张图里多条曲线,与「跑一次」同构', () => {
+    const multi = clone(archivedWithEquity) as Record<string, any>
+    multi.results.push({
+      ...clone(archivedWithEquity.results[0]),
+      strategy: 'ma_cross',
+    })
+    const { container } = render(<ArchiveDetail run={multi as never} />)
+    const boxes = container.querySelectorAll('.chartbox')
+    // 每条策略一个 figure/一张图(与现有 results.map 的结构一致)
+    expect(boxes.length).toBe(2)
+    const text = container.textContent!
+    expect(text).toContain('buy_and_hold')
+    expect(text).toContain('ma_cross')
   })
 
   it('ADR-021:归档也带着那两条假设', () => {

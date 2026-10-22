@@ -21,7 +21,7 @@ import {
   CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer,
   Tooltip, XAxis, YAxis,
 } from 'recharts'
-import type { StrategyResult } from '../types'
+import type { EquityPoint, Summary } from '../types'
 import { money, money0 } from '../format'
 import { cssVar } from '../theme'
 
@@ -42,8 +42,25 @@ export function seriesColor(i: number): string {
   return cssVar(SERIES_VARS[i % SERIES_VARS.length])
 }
 
+/** 本组件**实际读到的**字段,恰好三项:`strategy`(图例名与 dataKey)、
+ *  `equity[]`(曲线本体 + 价格对照列)、`summary.final_equity`(图例末值)。
+ *
+ *  **不是 `StrategyResult`** —— ADR-032 修订(T26)让历史页复用本组件,
+ *  而归档里**没有 `trades`**(逐笔清单不进 `run.json`)。若 props 继续要求
+ *  整个 `StrategyResult`,历史页就得伪造一个空 `trades: []` 来满足类型 ——
+ *  那是**用类型谎言换编译通过**:屏幕上会出现一个「这次运行零交易」的
+ *  可读状态,而真相是「逐笔清单没有被归档」。
+ *
+ *  故把 props 收窄成本组件真正依赖的最小结构。`StrategyResult` 与归档的
+ *  `results[i]`(含 `equity`)都结构性满足它,两侧无需任何适配层。 */
+export interface EquityChartSeries {
+  strategy: string
+  equity: EquityPoint[]
+  summary: Pick<Summary, 'final_equity'>
+}
+
 export interface EquityChartProps {
-  results: StrategyResult[]
+  results: EquityChartSeries[]
   /** 初始资金 —— 画基准虚线用。读 summary.initial_cash,不自己推导。 */
   initialCash: number
 }

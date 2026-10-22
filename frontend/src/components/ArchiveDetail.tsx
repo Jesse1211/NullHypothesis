@@ -1,8 +1,20 @@
 /** T14 · 归档详情 —— **主栏**(由 ADR-048 从 `HistoryList` 拆出)。
  *
- * **ADR-032**:归档项**只显示 PNG 快照**,不重建交互图 —— 归档的意义是
- * 「当时跑出来就是这样」,用当时那张图,而不是用今天的代码重画一遍。
+ * **ADR-032 原文**:归档项**只显示 PNG 快照**,不重建交互图 —— 归档的意义
+ * 是「当时跑出来就是这样」,用当时那张图,而不是用今天的代码重画一遍。
  * 图像 URL 走专用端点(ADR-045),不是 `/out/...` 静态路径。
+ *
+ * **T26 修订(用户决策)**:上面那条**在有 `equity[]` 的归档上已退役**。
+ * 原论证的前提是「重画 = 用今天的代码重算」,而 T26 让 `run.json` 存下
+ * **当时那次的逐日 `equity` 序列**,于是重画只是把**当时的数**换一种画法 ——
+ * 没有任何数字被重算,「当时跑出来就是这样」仍然成立。被推翻的只是
+ * 「忠于历史 ⇒ 必须是静态图」这一步推理。
+ *
+ * 代价已知且被接受:曲线的**渲染方式**会随前端代码演进(今天是双轴 Recharts,
+ * 将来可能不同),而 PNG 不会。换来的是历史与当次**同款**的交互图。
+ *
+ * **没有 `equity[]` 的归档仍走 PNG** —— 旧 checkout 写的归档只有 PNG,而
+ * `run.json` 是跨阶段锁定的契约。这不是过渡期的临时分支。
  *
  * **「不重建 Recharts」不等于「不显示汇总」**:ADR-032 把 `GET /api/runs/{id}`
  * 定义为「该次的**汇总** + 归档 PNG」,故汇总字段在范围内,受限的只是交互图。
@@ -15,6 +27,7 @@
 
 import type { ArchivedRun } from '../types'
 import { integer, money, orNull, percent, percentUnsigned, pngUrl, ratio } from '../format'
+import EquityChart from './EquityChart'
 
 export interface ArchiveDetailProps {
   run: ArchivedRun | null
@@ -79,8 +92,31 @@ export default function ArchiveDetail({ run }: ArchiveDetailProps) {
               </>
             )}
           </figcaption>
-          {/* 归档快照,不是 Recharts(ADR-032);URL 见 ADR-045 */}
-          <img src={pngUrl(run.run_id, r.png_path)} alt={`${r.strategy} 净值曲线`} />
+          {/* ADR-032 修订(T26):有 `equity[]` 就用**与「跑一次」同一个**
+              `EquityChart` 重画 —— 双 y 轴(左净值 / 右价格)、hover 十字线、
+              图例点击切换、初始资金基准虚线全部到位,因为它**就是同一个组件**,
+              不是一个长得像的副本。
+
+              `initialCash` 读 `request.cash`(该次运行的**请求**值),不读
+              `summary.initial_cash` —— 后者在归档 schema 里确实也有,但基准
+              虚线问的是「当时投了多少钱」,那是请求的性质(与 ADR-056 把
+              `fee`/`slippage` 归为请求性质同一条理由)。
+
+              键缺失 → 回退到 PNG 快照。这条回退**不能删**:旧 checkout 写的
+              归档只有 PNG,而 `run.json` 是跨阶段锁定的契约。 */}
+          {r.equity
+            ? (
+              <EquityChart
+                results={[{
+                  strategy: r.strategy,
+                  equity: r.equity,
+                  summary: { final_equity: r.summary.final_equity },
+                }]}
+                initialCash={run.request.cash}
+              />
+            )
+            /* 归档快照;URL 见 ADR-045 */
+            : <img src={pngUrl(run.run_id, r.png_path)} alt={`${r.strategy} 净值曲线`} />}
         </figure>
       ))}
 

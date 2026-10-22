@@ -122,8 +122,28 @@ def test_run_json_matches_the_pinned_schema(tmp_path):
                                        "events", "slippage"}
     # 不传 `--events` 时它必须是 `null` —— 加性保证的可观测形式(T20 门 11)。
     assert payload["request"]["events"] is None
-    assert set(payload["results"][0]) == {"strategy", "summary", "png_path"}
+    # `equity`(ADR-032 修订 / T26)同样追加在末尾 —— 加性扩展,既有三键的
+    # 名称、类型、顺序逐字不变。它让历史页能用与「跑一次」同一个 Recharts
+    # 组件重画交互图(双轴 / hover / 图例),而不必用今天的代码重算昨天的数。
+    assert set(payload["results"][0]) == {"strategy", "summary", "png_path",
+                                          "equity"}
     assert set(payload["results"][0]["summary"]) == set(C["field_formats"])
+
+    # ── `equity[]` 的投影形状 ──
+    #
+    # **必须逐字等于 ADR-038 的 API 投影**(`date`/`equity`/`close`):两侧喂的
+    # 是同一个 `EquityChart`,投影分叉会让历史页悄悄需要一个变体组件 ——
+    # 而那正是 ADR-049 的双轴逻辑出现第二份实现的入口。
+    #
+    # 上面的集合相等只断言**键名**,断言不到序列内部;没有这一段,把
+    # `close` 写成 `price` 或漏掉它都能通过这条门,而前端的价格对照曲线
+    # (右轴)会静默变成一条空线。
+    equity = payload["results"][0]["equity"]
+    assert len(equity) == payload["results"][0]["summary"]["bars"], \
+        "逐日序列的点数必须等于交易日数(I6)"
+    for point in equity:
+        assert set(point) == {"date", "equity", "close"}, \
+            "cash/shares 是 I3 的内部对账量,不出档(ADR-038 同款理由)"
     import re
 
     assert re.fullmatch(C["patterns"]["run_id"], payload["run_id"])

@@ -121,6 +121,20 @@ export interface ArchivedRun {
      *  68 条如此)—— 那是类型在替历史编数据。 */
     summary: ArchivedSummary
     png_path: string
+    /** ADR-032 修订(T26):逐日净值序列,**可能整个键都不存在**。
+     *
+     *  存在 → 历史页用 `EquityChart` 重画交互图(与「跑一次」同一组件,
+     *  故双轴 / hover / 图例切换全部到位)。
+     *  缺失 → 回退到 `png_path` 的静态快照。
+     *
+     *  **`EquityPoint[]` 而非自定义形状** —— 它逐字段等于 ADR-038 的 API
+     *  投影,因为两侧喂的是同一个组件。若此处声明一个变体形状,`EquityChart`
+     *  就得接受两种输入,ADR-049 的双轴逻辑随即出现第二份实现。
+     *
+     *  与 `slippage` / `sharpe` 同构的加性扩展:旧 checkout 写的归档没有
+     *  这个键,`undefined` 时**不渲染交互图**,而不是渲染一张空图 ——
+     *  空图会把「当年没记录曲线」说成「当年净值为空」。 */
+    equity?: EquityPoint[]
   }>
   assumptions: string[]
   comparison_png_path: string | null
