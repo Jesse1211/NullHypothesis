@@ -367,3 +367,75 @@ describe('contracts.yaml ↔ 前端常量', () => {
     ).toEqual([])
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 暗主题的文字对比度(WCAG)
+//
+// 2026-10-22:原配色在深色底上实测偏暗 —— `--ink-3` 只有 4.03:1,**低于 AA 的
+// 4.5 正文门槛**,而它是使用最多的文字 token(19 处)。于是「大部分文字都不是
+// --ink」,整屏读起来发灰。本组门把对比度变成**可执行的断言**,而不是靠眼看。
+//
+// 另一条动机:这组 token 在 `@media (prefers-color-scheme: dark)` 与
+// `:root[data-theme="dark"]` 里**重复两份**。只改一处会让「手动切到暗色」
+// 仍是旧值 —— 正是本仓库反复踩的那个「同一个值多处复述,改一处漏一处」。
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('暗主题文字对比度', () => {
+  const css = cssSource
+
+  /** 取某个暗主题块里的 token 值。 */
+  function darkTokens(selector: string): Record<string, string> {
+    const i = css.indexOf(selector)
+    expect(i, `styles.css 里找不到 ${selector}`).toBeGreaterThan(-1)
+    const block = css.slice(i, css.indexOf('}', i))
+    const out: Record<string, string> = {}
+    for (const m of block.matchAll(/(--[a-z0-9-]+):\s*(#[0-9A-Fa-f]{6})/g)) {
+      out[m[1]] = m[2].toUpperCase()
+    }
+    return out
+  }
+
+  function luminance(hex: string): number {
+    const v = [1, 3, 5].map((i) => {
+      const c = parseInt(hex.slice(i, i + 2), 16) / 255
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+    })
+    return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]
+  }
+
+  function ratio(a: string, b: string): number {
+    const [x, y] = [luminance(a), luminance(b)]
+    return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05)
+  }
+
+  const MEDIA = '@media (prefers-color-scheme: dark)'
+  const TOGGLE = ':root[data-theme="dark"]'
+
+  it('两个暗主题块的 token 完全同值(改一处漏一处会红)', () => {
+    expect(darkTokens(MEDIA)).toEqual(darkTokens(TOGGLE))
+  })
+
+  it.each([MEDIA, TOGGLE])('%s:三级文字在两种底色上均达 AAA(≥7:1)', (sel) => {
+    const t = darkTokens(sel)
+    for (const bg of ['--ground', '--surface'] as const) {
+      for (const fg of ['--ink', '--ink-2', '--ink-3'] as const) {
+        const r = ratio(t[fg], t[bg])
+        expect(r, `${fg} on ${bg} = ${r.toFixed(2)}:1 —— 低于 AAA(7:1)。`
+          + '最初的缺陷正是 --ink-3 只有 4.03:1(连 AA 都不到)').toBeGreaterThanOrEqual(7)
+      }
+    }
+  })
+
+  it.each([MEDIA, TOGGLE])('%s:主要文字是纯白', (sel) => {
+    expect(darkTokens(sel)['--ink']).toBe('#FFFFFF')
+  })
+
+  it.each([MEDIA, TOGGLE])('%s:三级层级仍可辨 —— 不是一律纯白', (sel) => {
+    const t = darkTokens(sel)
+    // 回执是等宽表格:标签/数字/脚注若同亮度会难扫读。
+    // 故要求相邻两级的对比度**有可察的差距**(至少 1.5:1 的比值差)。
+    const r = (fg: string) => ratio(t[fg], t['--ground'])
+    expect(r('--ink')).toBeGreaterThan(r('--ink-2') + 1.5)
+    expect(r('--ink-2')).toBeGreaterThan(r('--ink-3') + 1.5)
+  })
+})

@@ -36,9 +36,15 @@
     --surface-2: #1C222B;
     --line: #2B333E;
     --line-soft: #222932;
-    --ink: #D7DEE6;
-    --ink-2: #98A2AE;
-    --ink-3: #6B757F;
+    /* 暗主题文字对比度(2026-10-22):原值在深色底上实测偏暗 ——
+       --ink-3 仅 4.03:1,**低于 WCAG AA 的 4.5 正文门槛**,而它是使用最多的
+       文字 token(.hint / .zsub / .limits / 部分 .receipt,共 19 处),
+       于是「大部分文字都不是 --ink」,整屏读起来发灰。
+       提亮后三级全部达 AAA(18.91 / 13.67 / 8.98),最暗处提升 2.2 倍,
+       同时保留可辨的三级层级 —— 回执是等宽表格,一律纯白会难扫读。 */
+    --ink: #FFFFFF;
+    --ink-2: #D4DCE6;
+    --ink-3: #A8B4C2;
     --accent: #4D9FEB;
     --accent-soft: rgba(77, 159, 235, .14);
     --series-2: #E0A33E;
@@ -58,9 +64,11 @@
   --surface-2: #1C222B;
   --line: #2B333E;
   --line-soft: #222932;
-  --ink: #D7DEE6;
-  --ink-2: #98A2AE;
-  --ink-3: #6B757F;
+  /* 与上面的 media query 块**保持同值** —— 这组 token 在两处重复,
+     只改一处会让「手动切到暗色」仍然是旧的低对比度值。 */
+  --ink: #FFFFFF;
+  --ink-2: #D4DCE6;
+  --ink-3: #A8B4C2;
   --accent: #4D9FEB;
   --accent-soft: rgba(77, 159, 235, .14);
   --series-2: #E0A33E;
