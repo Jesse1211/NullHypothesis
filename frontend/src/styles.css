@@ -149,7 +149,14 @@ body {
      滚动分离是那个拆分在交互上的自然延续)。
      `min-height: 0` 是 flex 子项能真正滚动的前提(否则它按内容撑开)。 */
   display: flex; flex-direction: column;
-  overflow-y: auto; min-height: 0;
+  /* **左栏自身不滚动** —— 它是一个分成上下两段的窗格:
+   *   上段 = 策略列表(`.nav-group`),**可滚**:策略很多时在自己那块滚
+   *   下段 = 数据/资金/费率/滑点/「跑」按钮,**固定不滚**,永远可见
+   * 若让 `.rail` 整体 `overflow-y: auto`(本轮之前的写法),策略一多就会把
+   * 下段挤到视野之外 —— 而那几个输入和「跑」按钮是每次都要用的,
+   * 不该需要滚动才能触达。
+   * `overflow: hidden` 而非 `visible`:防止上段内容在极端高度下溢出栏外。 */
+  overflow: hidden; min-height: 0;
 }
 /* 吸收剩余垂直空间的弹性间隔 —— 放在策略组之后 */
 .rail-fill { flex: 1 1 auto; min-height: 12px; }
@@ -239,6 +246,15 @@ body {
 }
 /* 条目多到超出左栏时在**组内**滚动,而不是把整页撑长 */
 .fgroup.nav-group .picklist { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
+/* 下段(数据 / 资金 / 费率 / 滑点 / 按钮)**固定高度、不参与伸缩** ——
+ * 只有策略组 `flex: 1` 会长,其余一律 `flex: none`,于是剩余空间全部
+ * 归上段,下段稳稳贴在策略列表之后。
+ * 不写这条时 flex 子项的默认 `flex-shrink: 1` 会在空间不足时**压缩**它们
+ * (输入框变矮、文字挤在一起),而不是让上段去滚。 */
+.rail > .fgroup:not(.nav-group),
+.rail > .runbtn,
+.rail > .hint { flex: none; }
 
 /* **窄屏撤销「占满高度」** —— 左栏在 ≤760px 是堆在上方的横条,
  * 若仍拉满屏高,结果区会被整屏推到首屏之外。

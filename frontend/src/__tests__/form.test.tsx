@@ -226,3 +226,30 @@ describe('ADR-056:滑点进提交体并显示生效值', () => {
     expect(sent.slippage).toBe(0.0005)
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 左栏分上下两段(使用者:「上半部分可以 scroll,如果策略选择非常多的情况下,
+// 但是下面的选择是不支持 scroll 的」)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('策略很多时下段仍然可达', () => {
+  it('⭐ 30 条策略:数据/资金/费率/滑点/按钮全部仍在 DOM', () => {
+    // 这是使用者描述的场景。`.rail` 若整体滚动,下段会被挤出视野;
+    // 本门守的是「下段存在且排在策略组之后」—— 滚动归上段。
+    renderForm({ strategies: Array.from({ length: 30 }, (_, i) => `s${i}.py`) })
+    for (const id of ['data-file', 'cash', 'fee', 'slippage', 'run-button']) {
+      expect(document.getElementById(id), `策略多时丢了 #${id}`).toBeTruthy()
+    }
+    expect(document.querySelectorAll('.pick')).toHaveLength(30)
+  })
+
+  it('下段必须排在策略组【之后】(顺序决定谁吃剩余空间)', () => {
+    renderForm({ strategies: ['a.py', 'b.py'] })
+    const kids = Array.from(document.querySelector('.rail')!.children)
+      .map((e) => e.className)
+    const nav = kids.findIndex((k) => k.includes('nav-group'))
+    const vstack = kids.findIndex((k) => k.includes('vstack'))
+    expect(nav, '找不到策略组').toBeGreaterThan(-1)
+    expect(vstack, '数字输入组须在策略组之后').toBeGreaterThan(nav)
+  })
+})

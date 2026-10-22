@@ -598,16 +598,37 @@ describe('双窗格独立滚动', () => {
     return css.slice(i, css.indexOf('}', i)).replace(/\/\*[\s\S]*?\*\//g, '')
   }
 
-  it('⭐ .rail 与 .main 各自 overflow-y: auto', () => {
-    // 两者都没有时整个 document 作为单一窗格滚动:滚结果区会把左栏表单
-    // 一起推走 —— 那与 ADR-048 把界面拆成 rail/main 两栏的意图相反。
-    for (const sel of ['.rail', '.main']) {
-      const d = decls(sel)
-      expect(d, `${sel} 缺 overflow-y: auto —— 它就不是独立窗格`)
-        .toContain('overflow-y: auto')
-      expect(d, `${sel} 缺 min-height: 0 —— flex/grid 子项不加它不会真正滚动,`
-        + '而是按内容撑开').toContain('min-height: 0')
-    }
+  it('⭐ .main 独立滚动', () => {
+    // 右侧窗格整体滚动。它没有时整个 document 作为单一窗格滚动:
+    // 滚结果区会把左栏表单一起推走 —— 那与 ADR-048 把界面拆成
+    // rail/main 两栏的意图相反。
+    const d = decls('.main')
+    expect(d, '.main 缺 overflow-y: auto —— 它就不是独立窗格')
+      .toContain('overflow-y: auto')
+    expect(d, '.main 缺 min-height: 0 —— flex/grid 子项不加它不会真正滚动,'
+      + '而是按内容撑开').toContain('min-height: 0')
+  })
+
+  it('⭐ .rail 自身【不】滚动 —— 滚动归上段的策略列表', () => {
+    // 左栏是分成上下两段的窗格:上段(策略列表)可滚,下段(数据/资金/
+    // 费率/滑点/按钮)固定可见。若让 `.rail` 整体滚动,策略一多就会把
+    // 下段挤出视野 —— 而那几个输入与「跑」按钮是每次都要用的。
+    const d = decls('.rail')
+    expect(d, '.rail 不应自己滚动,否则下段会被挤出视野')
+      .not.toContain('overflow-y: auto')
+    expect(d).toContain('min-height: 0')
+    // 真正滚动的是策略列表
+    expect(css, '策略列表须是那个可滚的上段')
+      .toMatch(/\.fgroup\.nav-group \.picklist \{[^}]*overflow-y: auto/s)
+  })
+
+  it('⭐ 下段固定不伸缩 —— 不被压缩也不被挤走', () => {
+    // flex 子项默认 `flex-shrink: 1`,空间不足时会**压缩**下段
+    // (输入框变矮、文字挤在一起)而不是让上段去滚。
+    const i = css.indexOf('.rail > .fgroup:not(.nav-group)')
+    expect(i, '缺「下段 flex: none」规则 —— 空间不足时下段会被压缩')
+      .toBeGreaterThan(-1)
+    expect(css.slice(i, css.indexOf('}', i))).toContain('flex: none')
   })
 
   it('body 不整页滚动(否则两栏一起滚)', () => {
