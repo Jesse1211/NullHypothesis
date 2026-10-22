@@ -40,11 +40,13 @@
        --ink-3 仅 4.03:1,**低于 WCAG AA 的 4.5 正文门槛**,而它是使用最多的
        文字 token(.hint / .zsub / .limits / 部分 .receipt,共 19 处),
        于是「大部分文字都不是 --ink」,整屏读起来发灰。
-       提亮后三级全部达 AAA(18.91 / 13.67 / 8.98),最暗处提升 2.2 倍,
-       同时保留可辨的三级层级 —— 回执是等宽表格,一律纯白会难扫读。 */
+       2026-10-22 二次提亮:第一轮(18.91/13.67/8.98)使用者仍觉得「灰」——
+       因为屏幕上大部分文字是 --ink-2/--ink-3,只把 --ink 提到纯白不够。
+       故**压缩层级**:三级全部贴近纯白(18.91 / 17.28 / 14.62),
+       层级改由字重与位置承担,不再主要靠亮度差。 */
     --ink: #FFFFFF;
-    --ink-2: #D4DCE6;
-    --ink-3: #A8B4C2;
+    --ink-2: #F2F5F8;
+    --ink-3: #DCE3EB;
     --accent: #4D9FEB;
     --accent-soft: rgba(77, 159, 235, .14);
     --series-2: #E0A33E;
@@ -67,8 +69,8 @@
   /* 与上面的 media query 块**保持同值** —— 这组 token 在两处重复,
      只改一处会让「手动切到暗色」仍然是旧的低对比度值。 */
   --ink: #FFFFFF;
-  --ink-2: #D4DCE6;
-  --ink-3: #A8B4C2;
+  --ink-2: #F2F5F8;
+  --ink-3: #DCE3EB;
   --accent: #4D9FEB;
   --accent-soft: rgba(77, 159, 235, .14);
   --series-2: #E0A33E;
@@ -125,7 +127,12 @@ body {
   align-items: start;
   min-height: calc(100% - 46px);
 }
-.rail { border-right: 1px solid var(--line); background: var(--surface); padding: 18px 18px 40px; }
+.rail {
+  border-right: 1px solid var(--line); background: var(--surface);
+  /* `--rail-pad` 由 `.pick` 的负 margin 引用 —— 两处必须同值,故设为 token */
+  --rail-pad: 18px;
+  padding: 18px var(--rail-pad) 40px;
+}
 .main { padding: 18px 22px 48px; min-width: 0; }
 
 @media (max-width: 1080px) {
@@ -167,27 +174,43 @@ body {
 }
 .fgroup { margin-bottom: 20px; }
 .fgroup fieldset { border: 0; margin: 0; padding: 0; }
-.picklist { display: flex; flex-direction: column; gap: 1px; }
+
+/* ───────── 策略选择器:左栏【满铺】的导航式列表,不是内嵌小卡片 ─────────
+ *
+ * 原形态是一组带圆角+边框+浅色底的卡片,内缩在 `.rail` 的 18px padding 里,
+ * 读起来像「表单里的一个小 box」。改为与左栏同宽的导航行:
+ *   · 负 margin 抵消 `.rail` 的左右 padding → 条目**铺满**左栏整宽
+ *   · 去掉圆角与边框 → 不再是卡片;分隔靠极细的 `--line-soft`
+ *   · 选中态用**左侧 3px 强调条**(与 `.navtab` 的下边框同一套语言),
+ *     而不是整块染色
+ * `--rail-pad` 是单一真相:`.rail` 与本列表都引用它,改一处即同步。 */
+.picklist { display: flex; flex-direction: column; }
 .pick {
   display: flex; align-items: center; gap: 9px;
-  padding: 7px 9px; border-radius: var(--r); cursor: pointer;
-  border: 1px solid transparent;
+  /* 左侧留出 3px 给强调条,故 padding-left 比 `--rail-pad` 少 3px */
+  padding: 9px var(--rail-pad) 9px calc(var(--rail-pad) - 3px);
+  margin: 0 calc(-1 * var(--rail-pad));
+  cursor: pointer;
+  border: 0; border-left: 3px solid transparent;
+  border-bottom: 1px solid var(--line-soft);
   font-family: var(--mono); font-size: 12.5px; color: var(--ink-2);
 }
-.pick:hover { background: var(--surface-2); }
+.picklist .pick:first-child { border-top: 1px solid var(--line-soft); }
+.pick:hover { background: var(--surface-2); color: var(--ink); }
 .pick input { accent-color: var(--accent); margin: 0; width: 13px; height: 13px; }
 .pick.on {
+  /* 选中:左条 + 极淡的底,而非整块染色 —— 满铺宽度下整块染色太重 */
+  border-left-color: var(--accent);
   background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
-  color: var(--ink);
+  color: var(--ink); font-weight: 600;
 }
-.pick .swatch { width: 3px; height: 13px; border-radius: 2px; background: transparent; }
-.pick.on .swatch { background: var(--accent); }
+/* 色块在满铺形态下由 `border-left` 承担,故隐藏原来的 3px 方块,
+   避免同一个信息出现两次(ADR-029 的配色归属不变) */
+.pick .swatch { display: none; }
 .pick.on.s2 {
+  border-left-color: var(--series-2);
   background: var(--series-2-soft);
-  border-color: color-mix(in srgb, var(--series-2) 28%, transparent);
 }
-.pick.on.s2 .swatch { background: var(--series-2); }
 .pick .nm { flex: 1; }
 
 .field {

@@ -430,12 +430,26 @@ describe('暗主题文字对比度', () => {
     expect(darkTokens(sel)['--ink']).toBe('#FFFFFF')
   })
 
-  it.each([MEDIA, TOGGLE])('%s:三级层级仍可辨 —— 不是一律纯白', (sel) => {
+  it.each([MEDIA, TOGGLE])('%s:最暗一级也必须「很白」(使用者的实际诉求)', (sel) => {
+    // 第一轮提亮(18.91 / 13.67 / 8.98)全部达 AAA,但使用者仍反馈发灰 ——
+    // 因为屏幕上大部分文字是 --ink-2/--ink-3。**WCAG 合格不等于看着够白**。
+    // 故本门守的是「最暗一级的下限」,而不是层级差:
+    // AAA 的 7:1 在这里不够,要求 ≥ 12:1。
     const t = darkTokens(sel)
-    // 回执是等宽表格:标签/数字/脚注若同亮度会难扫读。
-    // 故要求相邻两级的对比度**有可察的差距**(至少 1.5:1 的比值差)。
+    for (const bg of ['--ground', '--surface'] as const) {
+      const r = ratio(t['--ink-3'], t[bg])
+      expect(r, `--ink-3 on ${bg} = ${r.toFixed(2)}:1 —— 使用者要求「全部字体更白」,`
+        + '最暗一级不得低于 12:1(AAA 的 7:1 实测仍被感知为灰)')
+        .toBeGreaterThanOrEqual(12)
+    }
+  })
+
+  it.each([MEDIA, TOGGLE])('%s:三级仍严格递减 —— 不是同一个值', (sel) => {
+    // 压缩层级 ≠ 取消层级。仍要求严格单调,否则 token 名失去意义
+    // (三者同值时 `--ink-2` / `--ink-3` 就该被删掉而不是留着骗人)。
+    const t = darkTokens(sel)
     const r = (fg: string) => ratio(t[fg], t['--ground'])
-    expect(r('--ink')).toBeGreaterThan(r('--ink-2') + 1.5)
-    expect(r('--ink-2')).toBeGreaterThan(r('--ink-3') + 1.5)
+    expect(r('--ink')).toBeGreaterThan(r('--ink-2'))
+    expect(r('--ink-2')).toBeGreaterThan(r('--ink-3'))
   })
 })
