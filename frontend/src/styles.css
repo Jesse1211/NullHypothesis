@@ -85,6 +85,12 @@
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
+/* `#root` 是 React 的挂载点,**高度链必须经过它** —— 没有这条规则时
+   `body { height:100% }` 到此为止,`.shell` 的 `min-height: 100%-46px`
+   就是对一个 auto 高度的父级求百分比(无效),左栏于是塌成内容高度。
+   做成 flex 列后,`.shell` 直接吃掉顶栏以外的全部高度,
+   顺带**消掉那个 46px 魔法数字**(顶栏改高度时不必同步两处)。 */
+#root { height: 100%; display: flex; flex-direction: column; }
 body {
   margin: 0;
   background: var(--ground);
@@ -124,15 +130,24 @@ body {
 .shell {
   display: grid;
   grid-template-columns: 268px minmax(0, 1fr);
-  align-items: start;
-  min-height: calc(100% - 46px);
+  /* **不用 `align-items: start`** —— 它会把每个网格项压缩到内容高度,
+     于是左栏只有表单那么高,看起来像一张「浮在左侧的卡片」而不是一整条栏。
+     默认的 `stretch` 让左栏拉满 `.shell` 的高度,填满整屏。
+     (`.main` 用 `min-width: 0` 防溢出,不依赖 `align-items`。) */
+  flex: 1 1 auto; min-height: 0;
 }
 .rail {
   border-right: 1px solid var(--line); background: var(--surface);
-  /* `--rail-pad` 由 `.pick` 的负 margin 引用 —— 两处必须同值,故设为 token */
+  /* `--rail-pad` 由 `.nav-group` 的负 margin 引用 —— 两处必须同值,故设为 token */
   --rail-pad: 18px;
   padding: 18px var(--rail-pad) 40px;
+  /* 纵向占满整栏:栏本身由 `.shell` 的 stretch 拉满,这里让**内容**
+     也能利用那个高度 —— 策略列表之后的剩余空间由 `.rail-fill` 吸收,
+     使「跑」按钮与提示沉在底部,而不是全部挤在顶端。 */
+  display: flex; flex-direction: column;
 }
+/* 吸收剩余垂直空间的弹性间隔 —— 放在策略组之后 */
+.rail-fill { flex: 1 1 auto; min-height: 12px; }
 .main { padding: 18px 22px 48px; min-width: 0; }
 
 @media (max-width: 1080px) {
@@ -202,8 +217,31 @@ body {
 /* 整组满铺 —— 上一轮只让 `.pick` 满铺,但组标题与下方提示仍内缩在
  * `--rail-pad` 里,于是列表夹在两段缩进文字之间,**整体仍读作一个 box**。
  * 真正像 nav bar 需要整组都铺满:标题自带分隔线横贯左栏,行紧随其后。 */
-.fgroup.nav-group { margin: 0 calc(-1 * var(--rail-pad)) 20px; }
-.fgroup.nav-group > fieldset { display: block; }
+.fgroup.nav-group {
+  margin: 0 calc(-1 * var(--rail-pad)) 20px;
+  /* 策略组**吸收左栏的剩余高度** —— 使用者要求「卡片占满左侧,
+     高度和屏幕一样」。它是左栏里唯一可变长的列表(数据/资金/费率都是固定
+     高度的单行),故由它来长。列表短时下方留白,长时自己滚动。 */
+  flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0;
+}
+.fgroup.nav-group > fieldset {
+  display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0;
+}
+/* 条目多到超出左栏时在**组内**滚动,而不是把整页撑长 */
+.fgroup.nav-group .picklist { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
+/* **窄屏撤销「占满高度」** —— 左栏在 ≤760px 是堆在上方的横条,
+ * 若仍拉满屏高,结果区会被整屏推到首屏之外。
+ *
+ * ⚠️ 这个媒体查询**必须放在上面的基础规则之后**:两者特异性相同,
+ * 靠源码顺序决胜。初版把它写在 `@media (max-width: 760px)` 那个早先的块里
+ * (第 156 行),而基础规则在第 226 行 —— 于是覆盖**永远不生效**,
+ * 窄屏下左栏仍会拉满。这个缺陷由 layout 门的「基础规则须在覆盖之前」抓到。 */
+@media (max-width: 760px) {
+  .fgroup.nav-group,
+  .fgroup.nav-group > fieldset { flex: 0 0 auto; }
+  .fgroup.nav-group .picklist { flex: 0 0 auto; overflow-y: visible; }
+}
 .fgroup.nav-group .lbl {
   /* 组标题:横贯左栏的区段头,下方一条实线把它与列表分开 */
   margin: 0; padding: 7px var(--rail-pad) 7px var(--rail-pad);

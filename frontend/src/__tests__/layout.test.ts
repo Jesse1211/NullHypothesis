@@ -496,3 +496,56 @@ describe('策略选择器满铺左栏', () => {
     expect(on, '选中态须用 border-left-color 标识').toContain('border-left-color')
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 左栏纵向占满(使用者:「让这个卡片占满左侧,高度和屏幕一样」)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('左栏占满屏高', () => {
+  const css = cssSource
+
+  /** 取某选择器**基础规则**的声明体,并剥掉注释。
+   *  必须剥注释:块里的说明文字会提到 `align-items: start` 等字串,
+   *  不剥会把「解释为什么不用它」误判成「用了它」。
+   *  必须取基础规则:`indexOf` 会先命中媒体查询里的覆盖版本。 */
+  function decls(sel: string, from = 0): string {
+    const i = css.indexOf(sel + ' {', from)
+    expect(i, `styles.css 里找不到 ${sel}`).toBeGreaterThan(-1)
+    return css.slice(i, css.indexOf('}', i)).replace(/\/\*[\s\S]*?\*\//g, '')
+  }
+
+  it('⭐ 高度链不得断在 #root —— React 挂载点必须有高度', () => {
+    // 原缺陷:`#root` 无任何高度规则,于是 `body{height:100%}` 到此为止,
+    // `.shell` 的百分比高度对一个 auto 高度的父级求值(无效),左栏塌成内容高。
+    const i = css.indexOf('#root {')
+    expect(i, 'styles.css 缺 #root 规则 —— 高度链会断在这里').toBeGreaterThan(-1)
+    expect(css.slice(i, css.indexOf('}', i))).toContain('height')
+  })
+
+  it('.shell 不得用 align-items: start(它把左栏压成内容高度)', () => {
+    expect(decls('.shell')).not.toContain('align-items: start')
+  })
+
+  it('.rail 是 flex 列,策略组吸收剩余高度', () => {
+    expect(decls('.rail')).toContain('flex-direction: column')
+    expect(decls('.fgroup.nav-group'), '策略组须 flex:1 才能长满左栏')
+      .toContain('flex: 1 1 auto')
+  })
+
+  it('⭐ 窄屏(≤760px)必须撤销占满,且覆盖须在基础规则【之后】', () => {
+    // 两者特异性相同,**靠源码顺序决胜**。初版把覆盖写在一个更早的
+    // `@media (max-width: 760px)` 块里,而基础规则在后面 ——
+    // 于是覆盖永不生效,窄屏左栏仍会拉满。本门同时守「存在」与「顺序」。
+    const base = css.indexOf('.fgroup.nav-group {')
+    expect(base).toBeGreaterThan(-1)
+
+    // 在基础规则之后找撤销占满的那个媒体查询块
+    const mq = css.indexOf('@media (max-width: 760px)', base)
+    expect(mq, '基础规则之后必须有一个 ≤760px 的覆盖块').toBeGreaterThan(base)
+
+    const block = css.slice(mq, css.indexOf('\n}', css.indexOf('picklist', mq)))
+    expect(block, '窄屏左栏是上方横条,拉满屏高会把结果顶出首屏')
+      .toContain('flex: 0 0 auto')
+    expect(block).toContain('overflow-y: visible')
+  })
+})
